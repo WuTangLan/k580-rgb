@@ -16,11 +16,14 @@ public abstract class Source
     /// <summary>Why capture stopped (missing device, driver hiccup), for the UI.</summary>
     public string? Error { get; protected set; }
 
+    /// <summary>Tests: sources never start, so effects see silence and a black screen.</summary>
+    public static bool CaptureDisabled { get; set; }
+
     public void Acquire()
     {
         lock (_lock)
         {
-            if (++_users != 1)
+            if (++_users != 1 || CaptureDisabled)
                 return;
             _stop = new CancellationTokenSource();
             var token = _stop.Token;

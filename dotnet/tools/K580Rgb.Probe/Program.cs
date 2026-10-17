@@ -77,6 +77,7 @@ if (args is ["audio"])
 }
 if (args is ["frames", var specPath])
 {
+    K580Rgb.Core.Sources.Source.CaptureDisabled = true;     // like parity_check.py's stubs: silence, black screen
     // [{name, layers, presses: [[index, t]...], times: [...]}] -> {name: [[r,g,b] x 126 per time]}
     var result = new JsonObject();
     foreach (var spec in JsonNode.Parse(File.ReadAllText(specPath))!.AsArray())
