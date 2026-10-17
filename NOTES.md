@@ -43,7 +43,7 @@ Streaming per-key frames through 0x11 therefore programs flash on every packet, 
 
 ## Side light strips (confirmed on the keyboard, 2026-10-17)
 - 14 LEDs on matrix slots from table 0x8335: left `13,112,114,115,116,117,118`, right `17,18,19,20,79,100,98`
-  (each list runs front/spacebar end to back). Their G and B are swapped vs keys: the firmware writes G into the B plane.
+  (the table lists each strip back to front; layout.py uses front to back). Their G and B are swapped vs keys: the firmware writes G into the B plane.
 - Profile bytes: `0x14` mode (0 off, 1 per-LED color-wheel flow, 2 whole-strip color cycle, 3 breathing that steps
   color each breath, 4 static, 5 copies the current key-effect color), `0x15` speed, `0x16` color index into 0x8BFD
   (red, orange, yellow, green, cyan, blue, purple, white). The side engine is the second switch in the effects tick (0x6A5E);

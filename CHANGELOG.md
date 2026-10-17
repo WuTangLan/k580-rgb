@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1
+
+### Added
+- **Music effects:** every music layer has **React to** (All / Low (bass) / Mid / High (treble)) and
+  **Sensitivity** (0.2–3×). Spectrum, Center Bars and Waterfall spread the chosen range across the keyboard;
+  VU Meter, Pulse and Color Flow follow its loudness; Beat Ripple detects beats in that range
+  (e.g. hi-hats with *High*).
+
+### Fixed
+- Side strips were mapped back to front, so they ran the opposite way to the keys
+  (e.g. the VU meter filled them top to bottom). This affected every effect that moves along the strips.
+
 ## 0.2.0
 
 ### Added

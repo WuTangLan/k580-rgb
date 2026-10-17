@@ -73,10 +73,12 @@ class Key:
                 'w': self.w, 'h': self.h, 'iso': self.iso, 'side': self.side}
 
 
-# Side light strips: 7 LEDs per side, listed front (spacebar end) to back, confirmed on
-# the keyboard. They sit just outside the key area so spatial effects flow onto them.
-SIDE_LEFT = [13, 112, 114, 115, 116, 117, 118]
-SIDE_RIGHT = [17, 18, 19, 20, 79, 100, 98]
+# Side light strips: 7 LEDs per side, listed front (spacebar end) to back. The firmware's
+# table (0x8335) runs back to front; confirmed on the keyboard with the VU meter, where the
+# strips must rise together with the key rows. They sit just outside the key area so
+# spatial effects flow onto them.
+SIDE_LEFT = [118, 117, 116, 115, 114, 112, 13]
+SIDE_RIGHT = [98, 100, 79, 20, 19, 18, 17]
 SIDE_GAP, SIDE_W = 0.35, 0.4
 _seg = HEIGHT / 7
 

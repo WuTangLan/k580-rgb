@@ -35,8 +35,8 @@ REPLY_TIMEOUT = 0.5       # s per attempt
 
 # Side light strips: 14 LEDs in two groups of 7 (firmware table 0x8335). Their green and
 # blue are wired swapped relative to the keys (firmware writes G into the B plane for them).
-SIDE_GROUP_A = [13, 112, 114, 115, 116, 117, 118]     # left strip, front to back
-SIDE_GROUP_B = [17, 18, 19, 20, 79, 100, 98]          # right strip, front to back
+SIDE_GROUP_A = [13, 112, 114, 115, 116, 117, 118]     # left strip, firmware order (back to front)
+SIDE_GROUP_B = [17, 18, 19, 20, 79, 100, 98]          # right strip, firmware order (back to front)
 SIDE_LEDS = SIDE_GROUP_A + SIDE_GROUP_B
 SIDE_OFFSET = 0x14                 # profile bytes: mode, speed, color index
 SIDE_MODES = ['Off', 'Rainbow flow', 'Color cycle', 'Breathing', 'Static', 'Follow keys']

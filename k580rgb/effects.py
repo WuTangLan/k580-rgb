@@ -408,7 +408,20 @@ class Heatmap(Effect):
         return ramp(HEAT, self._value(key.index, t) / 8)
 
 
+# Which of the 22 analysis bands (40 Hz - 16 kHz, log spaced) each "react to" choice uses
+FOCUS_BANDS = {'All': (0, 22), 'Low (bass)': (0, 7), 'Mid': (7, 17), 'High (treble)': (17, 22)}
+FOCUS_BOOST = {'All': 1.0, 'Low (bass)': 1.0, 'Mid': 1.2, 'High (treble)': 1.6}   # treble is quieter
+
+
+def audio_controls(focus='All'):
+    """The 'react to' + 'sensitivity' controls every music effect has."""
+    return {'react to': [focus] + [f for f in FOCUS_BANDS if f != focus], 'sensitivity': 1.0}
+
+
 class AudioEffect(Effect):
+    """Base for music effects. Each frame, `self.fb` holds the chosen frequency range's
+    band levels (0..1, sensitivity applied) and `self.flevel` their average loudness.
+    Subclasses put per-frame logic in update(t)."""
     source = 'audio'
 
     def __init__(self, **kw):
@@ -416,19 +429,36 @@ class AudioEffect(Effect):
         from .sources import AUDIO
         self.audio = AUDIO
         AUDIO.acquire()
+        focus = self.p.get('react to', 'All')
+        self.focus = FOCUS_BANDS.get(focus, FOCUS_BANDS['All'])
+        self.gain = float(self.p.get('sensitivity', 1.0)) * FOCUS_BOOST.get(focus, 1.0)
+        self.fb, self.flevel = [0.0] * (self.focus[1] - self.focus[0]), 0.0
 
     def close(self):
         self.audio.release()
 
+    def frame(self, t):
+        lo, hi = self.focus
+        self.fb = [min(1.0, b * self.gain) for b in self.audio.bands[lo:hi]]
+        self.flevel = sum(self.fb) / len(self.fb)
+        self.update(t)
+        return super().frame(t)
+
+    def update(self, t):
+        pass
+
+    def band_at(self, frac):
+        """Level of the chosen range at position frac (0 = lowest, 1 = highest frequency)."""
+        return self.fb[min(max(int(frac * len(self.fb)), 0), len(self.fb) - 1)]
+
 
 class AudioSpectrum(AudioEffect):
-    """Equaliser bars: one band per key column, rising from the bottom row."""
+    """Equaliser bars: the chosen frequency range spread across the key columns."""
     name = 'Audio Spectrum'
-    params = {'style': ['Rainbow', 'Gradient'], 'from': '#00ff60', 'to': '#ff0030'}
+    params = {**audio_controls(), 'style': ['Rainbow', 'Gradient'], 'from': '#00ff60', 'to': '#ff0030'}
 
     def color(self, key, t):
-        from .sources import AUDIO_BANDS
-        level = self.audio.bands[column(key, AUDIO_BANDS)]
+        level = self.band_at(column(key, 1000) / 1000)
         up = (HEIGHT - key.cy) / HEIGHT
         lit = clamp((level - up) * 6 + 1)
         if not lit:
@@ -441,13 +471,13 @@ class AudioSpectrum(AudioEffect):
 
 
 class AudioPulse(AudioEffect):
-    """Whole keyboard pulses with the bass; colour drifts slowly."""
+    """Whole keyboard pulses with the music (bass by default); colour drifts slowly."""
     name = 'Audio Pulse'
-    params = {'style': ['Rainbow', 'Color'], 'color': '#ff0050'}
+    params = {**audio_controls('Low (bass)'), 'style': ['Rainbow', 'Color'], 'color': '#ff0050'}
 
     def color(self, key, t):
         c = hsv(t * 0.03 + key.cx / WIDTH * 0.15) if self.p['style'] == 'Rainbow' else hex_to_rgb(self.p['color'])
-        return lerp(BLACK, c, 0.05 + 0.95 * self.audio.bass ** 1.5)
+        return lerp(BLACK, c, 0.05 + 0.95 * self.flevel ** 1.5)
 
 
 class ScreenAmbience(Effect):
@@ -476,14 +506,13 @@ class ScreenAmbience(Effect):
 # -- more music modes ------------------------------------------------------------------
 
 class AudioCenter(AudioEffect):
-    """Spectrum mirrored from the middle: bass in the centre, treble at both edges."""
+    """Spectrum mirrored from the middle: low notes in the centre, high ones at both edges."""
     name = 'Audio Center Bars'
-    params = {'style': ['Rainbow', 'Gradient'], 'from': '#ff00a0', 'to': '#00e0ff'}
+    params = {**audio_controls(), 'style': ['Rainbow', 'Gradient'], 'from': '#ff00a0', 'to': '#00e0ff'}
 
     def color(self, key, t):
-        from .sources import AUDIO_BANDS
         dist = abs(key.cx - WIDTH / 2) / (WIDTH / 2)
-        level = self.audio.bands[min(int(dist * AUDIO_BANDS), AUDIO_BANDS - 1)]
+        level = self.band_at(dist)
         up = (HEIGHT - key.cy) / HEIGHT
         lit = clamp((level - up) * 6 + 1)
         if not lit:
@@ -499,21 +528,18 @@ VU = [(0, (0, 255, 60)), (0.6, (255, 220, 0)), (1, (255, 0, 0))]
 class AudioVU(AudioEffect):
     """Loudness meter filling the keyboard from the bottom, with a falling peak line."""
     name = 'Audio VU Meter'
-    params = {}
+    params = audio_controls()
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.peak, self.peak_t, self.level, self.last = 0.0, 0.0, 0.0, None
+        self.peak, self.peak_t, self.level = 0.0, 0.0, 0.0
 
-    def frame(self, t):
-        if self.last != t:                 # update once per frame, not per key
-            self.last = t
-            self.level = clamp(self.audio.volume * 2.2)
-            if self.level >= self.peak:
-                self.peak, self.peak_t = self.level, t
-            else:
-                self.peak = max(self.level, self.peak - max(0.0, t - self.peak_t - 0.4) * 0.05)
-        return super().frame(t)
+    def update(self, t):
+        self.level = clamp(self.flevel * 2.2)
+        if self.level >= self.peak:
+            self.peak, self.peak_t = self.level, t
+        else:
+            self.peak = max(self.level, self.peak - max(0.0, t - self.peak_t - 0.4) * 0.05)
 
     def color(self, key, t):
         up = (HEIGHT - key.cy) / HEIGHT
@@ -527,42 +553,42 @@ class AudioVU(AudioEffect):
 class AudioWaterfall(AudioEffect):
     """Spectrum history: newest on the bottom row, scrolling up."""
     name = 'Audio Waterfall'
-    params = {}
+    params = audio_controls()
     ROWS = 6
 
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.history = [[0.0] * 22 for _ in range(self.ROWS)]
+        self.history = [list(self.fb) for _ in range(self.ROWS)]
         self.next_push = 0.0
 
-    def frame(self, t):
+    def update(self, t):
         if t >= self.next_push or t < self.next_push - 1:
             self.next_push = t + 0.08
-            self.history = self.history[1:] + [list(self.audio.bands)]
-        return super().frame(t)
+            self.history = self.history[1:] + [list(self.fb)]
 
     def color(self, key, t):
-        from .sources import AUDIO_BANDS
         age = min(int((HEIGHT - key.cy) / HEIGHT * self.ROWS), self.ROWS - 1)   # 0 = bottom = newest
-        band = column(key, AUDIO_BANDS)
-        return ramp(HEAT, self.history[-1 - age][band] * 1.1)
+        row = self.history[-1 - age]
+        return ramp(HEAT, row[column(key, len(row))] * 1.1)
 
 
 class AudioBeatRipple(AudioEffect):
-    """A coloured ring bursts from the centre on every beat."""
+    """A coloured ring bursts from the centre on every beat of the chosen range
+    (kicks with Low, snares/vocals with Mid, hi-hats with High)."""
     name = 'Audio Beat Ripple'
-    params = {'background': '#05000a'}
+    params = {**audio_controls('Low (bass)'), 'background': '#05000a'}
 
     def __init__(self, **kw):
         super().__init__(**kw)
         self.rings = []          # (start time, hue)
-        self.seen = self.audio.beats
+        self.avg, self.last_beat = 0.0, -1.0
 
-    def frame(self, t):
-        if self.audio.beats != self.seen:
-            self.seen = self.audio.beats
+    def update(self, t):
+        e = self.flevel          # onset: loudness jumps well above its running average
+        if e > 0.3 and e > self.avg * 1.35 and t - self.last_beat > 0.18:
+            self.last_beat = t
             self.rings = (self.rings + [(t, (t * 0.07) % 1)])[-6:]
-        return super().frame(t)
+        self.avg = self.avg * 0.93 + e * 0.07
 
     def color(self, key, t):
         c = hex_to_rgb(self.p['background'])
@@ -578,16 +604,17 @@ class AudioBeatRipple(AudioEffect):
 class AudioColorFlow(AudioEffect):
     """Colour follows the pitch of the music (bassy = red, bright = blue), brightness the volume."""
     name = 'Audio Color Flow'
-    params = {}
+    params = audio_controls()
 
-    def frame(self, t):
-        bands = self.audio.bands
-        total = sum(bands) or 1e-6
-        self.centroid = sum(i * b for i, b in enumerate(bands)) / total / len(bands)
-        return super().frame(t)
+    def update(self, t):
+        # spectral centroid of the chosen range, placed on the full 22-band scale so bass
+        # stays red and treble blue whichever range you pick
+        total = sum(self.fb) or 1e-6
+        local = sum(i * b for i, b in enumerate(self.fb)) / total
+        self.centroid = (self.focus[0] + local) / 22
 
     def color(self, key, t):
-        v = clamp(0.06 + self.audio.volume * 2.5)
+        v = clamp(0.06 + self.flevel * 2.5)
         wave = 0.05 * math.sin(key.cx * 0.4 - t * 2)
         return hsv(self.centroid * 0.75 + wave, 1, v)
 
