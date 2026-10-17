@@ -22,3 +22,9 @@ build/
 .idea/
 Thumbs.db
 desktop.ini
+
+# .NET
+dotnet/**/bin/
+dotnet/**/obj/
+*.user
+.vs/
