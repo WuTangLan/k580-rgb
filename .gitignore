@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Vendor binaries (Redragon's copyrighted firmware/tools) - get them from Redragon support
+recovery/
+stock-firmware/
+*.exe
+
+# Firmware images, flash dumps and listings derived from the vendor firmware.
+# Regenerate locally with tools/extract_fw.py and tools/patch.py (see USAGE.md).
+extracted/
+build/
+*.bin
+*.hex
+*.lst
+
+# Local editor / OS files
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

@@ -1,0 +1,6 @@
+# Reverse-engineering, patching and flashing tools (tools/*.py)
+-r ../requirements.txt
+pefile>=2023.2.7
+capstone>=5.0
+keystone-engine>=0.9.2
+unicorn>=2.0
