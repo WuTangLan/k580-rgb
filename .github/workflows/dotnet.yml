@@ -1,0 +1,38 @@
+name: Windows exe
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Build
+        run: dotnet build dotnet/K580Rgb.slnx
+
+      - name: Parity check against the Python app
+        run: |
+          python -m pip install -r requirements.txt
+          python dotnet/tools/parity_check.py
+
+      - name: Publish single-file exe
+        run: dotnet publish dotnet/src/K580Rgb.App -p:PublishProfile=Exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: K580Rgb
+          path: dotnet/dist/K580Rgb.exe
