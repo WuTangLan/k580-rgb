@@ -7,6 +7,7 @@ import webbrowser
 
 from .automation import Automation
 from .controller import CONFIG_DIR, LOG_PATH, Controller
+from . import __version__
 from .server import serve
 
 
@@ -37,7 +38,7 @@ def main():
 
     httpd = serve(controller, automation, args.port)
     url = 'http://127.0.0.1:%d/' % args.port
-    print('K580 RGB running at %s  (Ctrl+C to quit)' % url)
+    print('K580 RGB %s running at %s  (Ctrl+C to quit)' % (__version__, url))
     if not args.no_browser:
         webbrowser.open(url)
     try:

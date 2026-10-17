@@ -34,6 +34,97 @@ def hex_to_rgb(s):
     return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
 
 
+# -- palettes (perceptual blending in OKLab) ------------------------------------------------
+
+def _to_linear(c):
+    c /= 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _to_srgb(c):
+    c = min(max(c, 0.0), 1.0)
+    return round(255 * (12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055))
+
+
+def rgb_to_oklab(rgb):
+    r, g, b = (_to_linear(v) for v in rgb)
+    l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+    m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+    s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+
+
+def _oklab_to_linear(L, a, b):
+    l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+    m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+    s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+    return (4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+            -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+            -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+
+
+def oklab_to_rgb(lab):
+    """OKLab -> sRGB. Out-of-range colours lose chroma (keeping hue and lightness)
+    instead of being clipped per channel, which would shift the hue."""
+    L, a, b = lab
+    for _ in range(30):
+        lin = _oklab_to_linear(L, a, b)
+        if all(-0.0005 <= v <= 1.0005 for v in lin):
+            break
+        a, b = a * 0.92, b * 0.92
+    else:
+        lin = _oklab_to_linear(L, 0.0, 0.0)
+    return tuple(_to_srgb(v) for v in lin)
+
+
+PALETTE = 'palette'   # param marker: {'palette': [...]} = editable list of 2-8 colours
+
+
+def oklch_mix(c1, c2, f):
+    """Blend two RGB colours in OKLCH: lightness and chroma linearly, hue the short way
+    round. Unlike RGB or OKLab, opposite hues don't wash out to grey halfway."""
+    (L1, a1, b1), (L2, a2, b2) = rgb_to_oklab(c1), rgb_to_oklab(c2)
+    C1, C2 = math.hypot(a1, b1), math.hypot(a2, b2)
+    h1, h2 = math.atan2(b1, a1), math.atan2(b2, a2)
+    if C1 < 0.02:                     # grey/black/white has no hue: borrow the other one's
+        h1 = h2
+    if C2 < 0.02:
+        h2 = h1
+    dh = (h2 - h1 + math.pi) % (2 * math.pi) - math.pi
+    L, C, h = L1 + (L2 - L1) * f, C1 + (C2 - C1) * f, h1 + dh * f
+    return oklab_to_rgb((L, C * math.cos(h), C * math.sin(h)))
+
+
+class Palette:
+    """Colour stops blended perceptually (OKLCH), precomputed into a 256-entry lookup."""
+    SIZE = 256
+
+    def __init__(self, hex_colors, cyclic=False):
+        stops = [hex_to_rgb(c) for c in hex_colors[:8]] or [(0, 0, 0)]
+        if cyclic:
+            stops = stops + stops[:1]               # wrap back to the first colour
+        n = len(stops) - 1
+        self.lut = []
+        for i in range(self.SIZE):
+            pos = i / (self.SIZE - 1) * n if n else 0
+            j = min(int(pos), n - 1) if n else 0
+            self.lut.append(oklch_mix(stops[j], stops[min(j + 1, n)], pos - j))
+
+    def at(self, v):
+        return self.lut[int(min(max(v, 0.0), 1.0) * (self.SIZE - 1))]
+
+
+def palette_param(value, default):
+    """Accept a list of hex colours (from the UI) or the {'palette': [...]} default."""
+    if isinstance(value, dict):
+        value = value.get('palette')
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return [str(c) for c in value[:8]]
+    return default['palette']
+
+
 class Effect:
     """Base class. `params` come from the UI; `speed` is a multiplier around 1.0."""
     name = ''
@@ -71,14 +162,23 @@ class Solid(Effect):
 
 
 class Gradient(Effect):
+    """Any number of colours across the keyboard; optionally scrolling as a seamless loop."""
     name = 'Gradient'
-    params = {'from': '#ff0080', 'to': '#00e0ff', 'angle': 0.0}
+    params = {'colors': {PALETTE: ['#ff0080', '#7b2cff', '#00e0ff']}, 'angle': 0.0,
+              'motion': ['Static', 'Scroll']}
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.scroll = self.p['motion'] == 'Scroll'
+        self.pal = Palette(palette_param(self.p['colors'], self.params['colors']), cyclic=self.scroll)
 
     def color(self, key, t):
         a = math.radians(float(self.p['angle']))
         x, y = key.cx / WIDTH - 0.5, key.cy / HEIGHT - 0.5
-        return lerp(hex_to_rgb(self.p['from']), hex_to_rgb(self.p['to']),
-                    0.5 + x * math.cos(a) + y * math.sin(a))
+        v = 0.5 + x * math.cos(a) + y * math.sin(a)
+        if self.scroll:
+            return self.pal.at((v * 0.8 - t * 0.08) % 1.0)
+        return self.pal.at(v)
 
 
 class RainbowWave(Effect):
@@ -258,6 +358,30 @@ class Aurora(Effect):
         v = (math.sin(x * 0.35 + t * 0.8 + math.sin(y * 0.9 + t * 0.5) * 1.5) + 1) / 2
         hue = 0.42 + 0.2 * math.sin(x * 0.15 - t * 0.2) + 0.08 * math.sin(y * 0.7 + t * 0.3)
         return hsv(hue, 0.9, 0.15 + 0.85 * v * v)
+
+
+class VincentSunset(Effect):
+    """Retro-futuristic synthwave: pink, cyan and purple gradients drifting slowly across the keys."""
+    name = 'Vincent Sunset'
+    params = {'colors': {PALETTE: ['#7b2cff', '#ff2e88', '#14e1ff']}}
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        colors = palette_param(self.p['colors'], self.params['colors'])
+        self.pal = Palette(colors, cyclic=True)              # loops seamlessly
+        self.horizon = hex_to_rgb(colors[1 if len(colors) > 1 else 0])
+
+    def color(self, key, t):
+        x, y = key.cx / WIDTH, key.cy / HEIGHT
+        tau = 2 * math.pi
+        # two slow drifting waves, one bending the other, plus a lower "horizon" bias
+        v = 0.5 * math.sin(tau * (x * 0.7 - t * 0.035) + 1.4 * math.sin(tau * (y * 0.5 + t * 0.02)))
+        v += 0.25 * math.sin(tau * (x * 0.25 + y * 0.6 + t * 0.025))
+        v = (v * 0.5 + 0.5 + y * 0.25 + t * 0.01) % 1.0
+        c = self.pal.at(v)
+        glow = 0.78 + 0.22 * math.sin(tau * (x * 0.4 + t * 0.05))             # gentle breathing
+        warm = lerp(c, self.horizon, clamp((y - 0.7) * 1.2) * 0.35)            # warmer bottom rows
+        return tuple(int(ch * glow) for ch in warm)
 
 
 class Heatmap(Effect):
@@ -605,6 +729,110 @@ class AssettoCorsaGear(Effect):
         return out
 
 
+class RocketManiaEffect(AudioEffect):
+    """Rocket Mania Deluxe: when rockets launch in the game, light streaks shoot from the
+    Caps rows to the middle of the keyboard and explode into fireworks."""
+    name = 'Rocket Mania: Launch & Fireworks'
+    params = {'rockets': ['Rainbow', 'Color'], 'color': '#ffb000', 'game folder': '',
+              'demo': ['Off', 'Every 3 s']}
+    source = 'game'
+    ROWS = [3.0, 4.0, 5.0]            # Tab, Caps, Shift row centres
+    MID_X = WIDTH * 0.5
+    TRAVEL = 0.45                     # s from the left edge to the middle
+    BURST = 1.3                       # s a burst lasts
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        from .games import ROCKET_MANIA
+        self.game = ROCKET_MANIA
+        self.folder = str(self.p['game folder']).strip().strip('"')
+        self.pending = []             # events from the audio thread
+        self.rockets = []             # (start t, row y, hue)
+        self.bursts = []              # (start t, x, y, hue)
+        self.launch_t = -9.0
+        self.next_demo = 0.0
+        self.rnd = random.Random()
+        self.audio.listeners.append(self._on_audio)
+
+    def close(self):
+        if self._on_audio in self.audio.listeners:
+            self.audio.listeners.remove(self._on_audio)
+        super().close()
+
+    def _on_audio(self, block):
+        spotter = self.game.ensure(self.folder)
+        if spotter:
+            self.pending.extend(spotter.feed(block))
+
+    def _hue(self):
+        return self.rnd.random() if self.p['rockets'] == 'Rainbow' else None
+
+    def _launch(self, t):
+        self.launch_t = t
+        for n in range(self.rnd.choice((1, 2, 2, 3))):
+            row = self.ROWS[(n + self.rnd.randrange(3)) % 3]
+            self.rockets.append((t + n * 0.09, row, self._hue()))
+
+    def _color(self, hue, v=1.0):
+        c = hex_to_rgb(self.p['color']) if hue is None else hsv(hue)
+        return tuple(int(ch * v) for ch in c)
+
+    def frame(self, t):
+        while self.pending:                                   # events from the game's sounds
+            kind = self.pending.pop(0)
+            if kind == 'launch':
+                self._launch(t)
+            else:
+                self.bursts.append((t, self.rnd.uniform(7, 20), self.rnd.uniform(0.3, 2.8), self._hue()))
+        if self.p['demo'] == 'Every 3 s' and t >= self.next_demo:
+            self.next_demo = t + 3.0
+            self._launch(t)
+        for r in list(self.rockets):                          # arrived -> explode at the middle
+            if t - r[0] >= self.TRAVEL:
+                self.rockets.remove(r)
+                self.bursts.append((t, self.MID_X + self.rnd.uniform(-1.5, 1.5), r[1] - 1.0, r[2]))
+        self.bursts = [b for b in self.bursts if t - b[0] < self.BURST][-8:]
+        return super().frame(t)
+
+    def color(self, key, t):
+        out = None
+        def add(c):
+            nonlocal out
+            out = c if out is None else tuple(max(a, b) for a, b in zip(out, c))
+        if key.side == 'left':                                # launch pad ignites bottom to top
+            age = t - self.launch_t
+            if 0 <= age < 0.9 and (HEIGHT - key.cy) / HEIGHT <= min(1.0, age / 0.3):
+                fade = 1 - max(0.0, age - 0.3) / 0.6
+                add(tuple(int(c * fade) for c in lerp((255, 255, 255), (255, 120, 0), age / 0.9)))
+        if key.side == 'right' and self.bursts:              # strip flashes with each burst
+            tb, _, _, hue = self.bursts[-1]
+            v = max(0.0, 1 - (t - tb) / 0.7)
+            if v:
+                add(self._color(hue, v))
+        for t0, row, hue in self.rockets:                     # streaks: bright head, coloured tail
+            age = t - t0
+            if age < 0 or key.side or abs(key.cy - row) > 0.5:
+                continue
+            p = 1 - (1 - age / self.TRAVEL) ** 2              # ease-out
+            head = p * self.MID_X
+            d = head - key.cx
+            if -0.6 < d < 4.5:
+                v = 1.0 if d < 0.6 else max(0.0, 1 - (d - 0.6) / 3.9)
+                add(lerp(self._color(hue, v), (255, 255, 255), 0.7 if d < 0.6 else 0.0))
+        for t0, bx, by, hue in self.bursts:                   # firework: flash, ring, sparkles
+            age = t - t0
+            dist = math.hypot(key.cx - bx, (key.cy - by) * 1.6)
+            fade = (1 - age / self.BURST) ** 1.5
+            if age < 0.12 and dist < 2.0:
+                add((255, 255, 255))
+            ring = abs(dist - age * 9)
+            if ring < 1.3 and age * 9 < 9:
+                add(self._color(hue, (1 - ring / 1.3) * fade))
+            if dist < age * 9 and (hash((key.index, int(t0 * 100), int(t * 12))) % 9) == 0:
+                add(lerp(self._color(hue, fade), (255, 255, 255), 0.5))
+        return out
+
+
 GAMING_KEYS = {
     'WASD': ['W', 'A', 'S', 'D'],
     'WASD + abilities': ['W', 'A', 'S', 'D', 'Q', 'E', 'R', 'F', '1', '2', '3', '4', '5', 'Shift', 'Ctrl', ''],
@@ -717,11 +945,11 @@ class ScrollingText(Effect):
 
 
 EFFECTS = {cls.name: cls for cls in
-           [RainbowWave, Aurora, Fire, BlackHole, Plasma, Spiral, ColorShift, Breathing, Rain, Starfield, Gradient,
+           [RainbowWave, VincentSunset, Aurora, Fire, BlackHole, Plasma, Spiral, ColorShift, Breathing, Rain, Starfield, Gradient,
             Solid, GifPlayer, ScrollingText,
             AudioSpectrum, AudioCenter, AudioVU, AudioWaterfall, AudioBeatRipple, AudioColorFlow, AudioPulse,
             ScreenAmbience, KeyFade, Ripple, Heatmap,
-            AssettoCorsaGear, GamingKeys, DamageFlash]}
+            AssettoCorsaGear, RocketManiaEffect, GamingKeys, DamageFlash]}
 
 BLENDS = ['Lighten', 'Add', 'Normal']
 

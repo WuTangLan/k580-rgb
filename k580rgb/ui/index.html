@@ -72,6 +72,18 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
   .card h3 { margin: 0 0 6px; font-size: 14px; }
   h2 { font-size: 14px; margin: 26px 0 10px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .6px; }
+  .pal { gap: 6px; }
+  .pal-stop { position: relative; display: inline-flex; }
+  .pal-stop .x { position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%;
+                 border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 12px;
+                 line-height: 14px; padding: 0; cursor: pointer; }
+  .pal-preview { flex: 1; min-width: 120px; height: 32px; border-radius: 6px; border: 1px solid var(--line); }
+  .suggestions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .suggestion { display: flex; flex-direction: column; gap: 4px; align-items: stretch; background: var(--panel2);
+                color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 6px; font: inherit;
+                font-size: 12px; cursor: pointer; width: 150px; }
+  .suggestion:hover { border-color: var(--dim); color: var(--text); }
+  .suggestion span { height: 18px; border-radius: 4px; }
   .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
             background: #2a2210; border: 1px solid #5a4510; color: var(--warn); border-radius: 10px;
             padding: 10px 14px; margin-bottom: 14px; }
@@ -154,6 +166,8 @@
       <span id="live-state" class="pill"></span>
       <div class="spacer"></div>
       <select id="preset"><option value="">Load a preset…</option></select>
+      <button class="btn" id="preset-save" title="Save the current layers as your own preset">Save as preset…</button>
+      <button class="btn" id="preset-delete" style="display:none"></button>
       <button class="btn" id="bake" title="Store the current frame as a per-key layout on the keyboard">Save frame to keyboard</button>
     </div>
     <div id="layers"></div>
@@ -366,6 +380,8 @@ function buildPerKey() {
 // ---------- live effects ----------
 // A scene is a stack of layers, bottom first: {effect, args, speed, blend, opacity}
 const PRESETS = {
+  'Vincent Sunset': [{effect: 'Vincent Sunset'}],
+  'Vincent Sunset + white key fade': [{effect: 'Vincent Sunset'}, {effect: 'Key Fade', args: {style: 'Color', color: '#ffffff'}}],
   'Aurora + rainbow key fade': [{effect: 'Aurora'}, {effect: 'Key Fade', args: {style: 'Rainbow'}}],
   'Fire + ripples': [{effect: 'Fire'}, {effect: 'Ripple', args: {background: '#000000', color: '#ffe080'}, blend: 'Add'}],
   'Music: spectrum over plasma': [{effect: 'Plasma', opacity: 0.2}, {effect: 'Audio Spectrum'}],
@@ -383,6 +399,8 @@ const PRESETS = {
   'Music: waterfall': [{effect: 'Audio Waterfall'}],
   'Music: beat ripples over aurora': [{effect: 'Aurora', opacity: 0.3}, {effect: 'Audio Beat Ripple', args: {background: '#000000'}, blend: 'Add'}],
   'Music: color flow + key fade': [{effect: 'Audio Color Flow'}, {effect: 'Key Fade', args: {style: 'Color', color: '#ffffff'}}],
+  'Rocket Mania: launch & fireworks': [{effect: 'Rocket Mania: Launch & Fireworks'}],
+  'Rocket Mania over Vincent Sunset': [{effect: 'Vincent Sunset', opacity: 0.35}, {effect: 'Rocket Mania: Launch & Fireworks'}],
   'Assetto Corsa: gear & RPM': [{effect: 'Aurora', opacity: 0.35}, {effect: 'Assetto Corsa: Gear & RPM'}],
   'Rainbow keys + music on strips': [{effect: 'Rainbow Wave', zone: 'Keys only'}, {effect: 'Audio Pulse', zone: 'Side strips only', blend: 'Normal'}],
   'Black hole + pulsing strips': [{effect: 'Black Hole', zone: 'Keys only'}, {effect: 'Breathing', args: {color: '#ff6a00'}, zone: 'Side strips only', blend: 'Normal'}],
@@ -394,7 +412,11 @@ let layers = [{effect: 'Rainbow Wave'}];
 const effInfo = n => S.effects.find(x => x.name === n);
 function normLayer(l) {
   const e = effInfo(l.effect), args = {};
-  for (const [k, v] of Object.entries(e.params)) args[k] = (l.args || {})[k] ?? (Array.isArray(v) ? v[0] : v);
+  for (const [k, v] of Object.entries(e.params)) {
+    const given = (l.args || {})[k];
+    if (v && v.palette) args[k] = Array.isArray(given) && given.length >= 2 ? given.slice(0, 8) : v.palette.slice();
+    else args[k] = given ?? (Array.isArray(v) ? v[0] : v);
+  }
   return {effect: l.effect, args, speed: l.speed ?? 1, blend: l.blend || e.blend || 'Lighten', opacity: l.opacity ?? 1,
           zone: l.zone || 'All'};
 }
@@ -404,11 +426,21 @@ function buildLive() {
   try { const s = JSON.parse(localStorage.getItem('k580.layers')); if (s && s.length) layers = s; } catch (e) {}
   layers = layers.filter(l => effInfo(l.effect)).map(normLayer);
   if (!layers.length) layers = [normLayer({effect: 'Rainbow Wave'})];
-  for (const name of Object.keys(PRESETS)) $('#preset').add(new Option(name, name));
+  buildPresetMenu();
   $('#preset').onchange = e => {
-    if (!e.target.value) return;
-    layers = PRESETS[e.target.value].map(normLayer); e.target.value = '';
-    renderLayers(); layersChanged();
+    const v = e.target.value; e.target.value = '';
+    if (!v) return;
+    const user = v.startsWith('u:'), name = v.slice(2);
+    const src = user ? (ST.live_presets || {})[name] : PRESETS[name];
+    if (!src) return;
+    layers = src.filter(l => effInfo(l.effect)).map(normLayer);
+    myPreset = user ? name : null;
+    showPresetButtons(); renderLayers(); layersChanged();
+  };
+  $('#preset-save').onclick = savePreset;
+  $('#preset-delete').onclick = () => {
+    if (!myPreset || !confirm('Delete your preset "' + myPreset + '"?')) return;
+    api('/api/presets/delete', {name: myPreset}).then(() => { toast('Deleted ' + myPreset); myPreset = null; showPresetButtons(); refresh(); });
   };
   $('#addlayer').onclick = () => { layers.push(normLayer({effect: 'Key Fade'})); renderLayers(); layersChanged(); };
   $('#preview').onclick = () => startLive(false);
@@ -436,6 +468,7 @@ function renderLayers() {
       const c = document.createElement('div'); c.className = 'ctl'; const val = l.args[k];
       if (Array.isArray(v))
         c.innerHTML = `<label>${k}</label><select data-k="${k}">${v.map(o => `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+      else if (v && v.palette) { c.style.flexBasis = '100%'; buildPaletteEditor(c, l, k); }
       else if (v === '@media') {
         const files = (ST && ST.media) || [];
         if (val === '@media' && files.length) l.args[k] = files[0].name;
@@ -477,6 +510,140 @@ function renderLayers() {
   });
   updateLiveNote();
 }
+// ---------- palettes: OKLCH colour math (mirrors effects.py) ----------
+const toLin = c => (c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+const toSrgb = c => Math.round(255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055));
+function toOklch(hexc) {
+  const [r, g, b] = rgb(hexc).map(toLin);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+  const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return [L, Math.hypot(A, B), Math.atan2(B, A)];
+}
+function fromOklchRaw(L, C, h) {
+  const A = C * Math.cos(h), B = C * Math.sin(h);
+  const l = (L + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+  const m = (L - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+  const s = (L - 0.0894841775 * A - 1.2914855480 * B) ** 3;
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+          -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+          -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
+}
+function fromOklch(L, C, h) {
+  // reduce chroma until the colour fits on screen (keeps hue and lightness)
+  for (let i = 0; i < 30; i++) {
+    const lin = fromOklchRaw(L, C, h);
+    if (lin.every(v => v >= -0.0005 && v <= 1.0005)) return hex(lin.map(v => toSrgb(Math.min(1, Math.max(0, v)))));
+    C *= 0.92;
+  }
+  return hex(fromOklchRaw(L, 0, h).map(v => toSrgb(Math.min(1, Math.max(0, v)))));
+}
+// Suggested in-between colours from the first to the last colour
+function suggestPalette(first, last, n, style) {
+  let [L1, C1, h1] = toOklch(first), [L2, C2, h2] = toOklch(last);
+  if (C1 < 0.02) h1 = h2;
+  if (C2 < 0.02) h2 = h1;
+  let dh = ((h2 - h1 + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;   // short way
+  if (style === 'Long way') dh = dh >= 0 ? dh - 2 * Math.PI : dh + 2 * Math.PI;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const f = i / (n - 1);
+    let C = C1 + (C2 - C1) * f;
+    if (style !== 'Smooth') C += Math.sin(Math.PI * f) * 0.08;     // keep the middle vivid
+    out.push(i === 0 ? first : i === n - 1 ? last : fromOklch(L1 + (L2 - L1) * f, C, h1 + dh * f));
+  }
+  return out;
+}
+const PALETTES = {
+  Synthwave: ['#7b2cff', '#ff2e88', '#14e1ff'], Vaporwave: ['#ff71ce', '#b967ff', '#01cdfe', '#05ffa1'],
+  Sunset: ['#2b1055', '#d53369', '#ff9a00', '#ffd56b'], Ocean: ['#001f54', '#0a7cff', '#00e5ff', '#a8fff3'],
+  Aurora: ['#00ff87', '#00b3ff', '#7a00ff'], Fire: ['#3d0000', '#ff3d00', '#ffb300', '#fff3b0'],
+  Cyberpunk: ['#fcee0a', '#ff003c', '#00f0ff'], Forest: ['#0b3d0b', '#2ecc40', '#c3ff68'],
+  Ice: ['#ffffff', '#a8e6ff', '#2a6bff'], Rainbow: ['#ff0000', '#ffb000', '#3cff00', '#00c8ff', '#7a00ff', '#ff00c8'],
+};
+const gradientCss = cols => `linear-gradient(90deg, ${cols.join(', ')})`;
+
+function buildPaletteEditor(c, l, k) {
+  const cols = l.args[k];
+  c.innerHTML = `<label>Colors <span class="note" style="margin:0">(${cols.length}, blended smoothly)</span></label>
+    <div class="row pal"></div>
+    <div class="row" style="margin-top:8px">
+      <select data-preset><option value="">Ready-made palette…</option>${Object.keys(PALETTES).map(p => `<option>${p}</option>`).join('')}</select>
+      <label>Suggest from first → last color:</label>
+      <select data-count><option>3</option><option selected>5</option><option>7</option></select>
+      <button class="btn" data-suggest>Suggest colors</button>
+    </div>
+    <div class="suggestions"></div>`;
+  const strip = c.querySelector('.pal');
+  const changed = () => { buildPaletteEditor(c, l, k); layersChanged(); };
+  cols.forEach((col, i) => {
+    const w = document.createElement('span'); w.className = 'pal-stop';
+    w.innerHTML = `<input type="color" value="${col}">${cols.length > 2 ? '<button class="x" title="Remove">×</button>' : ''}`;
+    w.querySelector('input').oninput = e => { cols[i] = e.target.value; c.querySelector('.pal-preview').style.background = gradientCss(cols); layersChanged(); };
+    const x = w.querySelector('.x'); if (x) x.onclick = () => { cols.splice(i, 1); changed(); };
+    strip.appendChild(w);
+  });
+  if (cols.length < 8) {
+    const add = document.createElement('button'); add.className = 'btn'; add.textContent = '+'; add.title = 'Add a color';
+    add.onclick = () => {      // new stop: perceptual midpoint of the last two colours
+      cols.splice(cols.length - 1, 0, suggestPalette(cols[cols.length - 2], cols[cols.length - 1], 3, 'Vivid')[1]);
+      changed();
+    };
+    strip.appendChild(add);
+  }
+  const prev = document.createElement('div'); prev.className = 'pal-preview'; prev.style.background = gradientCss(cols);
+  strip.appendChild(prev);
+  c.querySelector('[data-preset]').onchange = e => {
+    if (!e.target.value) return;
+    l.args[k] = PALETTES[e.target.value].slice(); buildPaletteEditor(c, l, k); layersChanged();
+  };
+  c.querySelector('[data-suggest]').onclick = () => {
+    const n = +c.querySelector('[data-count]').value, box = c.querySelector('.suggestions');
+    box.innerHTML = '';
+    for (const style of ['Smooth', 'Vivid', 'Long way']) {
+      const opt = suggestPalette(cols[0], cols[cols.length - 1], n, style);
+      const b = document.createElement('button'); b.className = 'suggestion';
+      b.innerHTML = `<span style="background:${gradientCss(opt)}"></span>${style}`;
+      b.title = opt.join('  ');
+      b.onclick = () => { l.args[k] = opt; buildPaletteEditor(c, l, k); layersChanged(); };
+      box.appendChild(b);
+    }
+  };
+}
+
+// ---------- your own presets (stored in the app's config) ----------
+let myPreset = null;          // name of the user preset the current layers came from
+function buildPresetMenu() {
+  const sel = $('#preset'), mine = Object.keys((ST && ST.live_presets) || {}).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Load a preset…</option>';
+  const group = (label, names, prefix) => {
+    if (!names.length) return;
+    const g = document.createElement('optgroup'); g.label = label;
+    names.forEach(n => g.appendChild(new Option(n, prefix + n)));
+    sel.appendChild(g);
+  };
+  group('My presets', mine, 'u:');
+  group('Built-in', Object.keys(PRESETS), 'b:');
+}
+function showPresetButtons() {
+  const del = $('#preset-delete');
+  del.style.display = myPreset ? '' : 'none';
+  del.textContent = myPreset ? 'Delete "' + myPreset + '"' : '';
+}
+function savePreset() {
+  const name = (prompt('Name for this preset:', myPreset || '') || '').trim().slice(0, 40);
+  if (!name) return;
+  const exists = ST && ST.live_presets && ST.live_presets[name];
+  if (exists && name !== myPreset && !confirm('A preset called "' + name + '" already exists. Replace it?')) return;
+  api('/api/presets/save', {name, layers}).then(r => {
+    if (r.error) return toast('Could not save: ' + r.error);
+    myPreset = name; showPresetButtons(); toast('Saved preset "' + name + '"'); refresh();
+  });
+}
+
 function uploadMedia(done) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.gif,.png,.jpg,.jpeg,.webp,.bmp,image/*';
@@ -507,6 +674,15 @@ function startLive(stream) {
     };
   }
 }
+function rocketNote() {
+  const r = ST && ST.rocket_mania;
+  let s = "<br>Rocket Mania: rockets are recognised by the game's own launch and firework sounds, so keep the game's sound on (any volume). "
+        + 'The game folder is found automatically while RocketMania.exe runs, or type it into the layer. Use <i>demo</i> to preview.';
+  if (r && r.folder) s += `<br><b>Listening</b>: sounds loaded from ${esc(r.folder)}` +
+      (r.last.launch !== undefined ? ` · last launch ${r.last.launch}s ago` : ' · no launch heard yet');
+  else if (r && r.error) s += `<br><span style="color:var(--warn)">${esc(r.error)}</span>`;
+  return s;
+}
 function updateLiveNote() {
   const infos = layers.map(l => effInfo(l.effect));
   const direct = ST && ST.direct;
@@ -523,7 +699,8 @@ function updateLiveNote() {
     + (infos.some(e => e.reactive) ? '<br>Reactive layers only check which keys are down while they run. What you type is never recorded.' : '')
     + (infos.some(e => e.source === 'audio') ? '<br>Audio layers react to whatever your PC is playing (default output device).' : '')
     + (infos.some(e => e.source === 'screen') ? '<br>Screen layers sample your main monitor about 15 times a second. The image is only averaged into colors and never stored.' : '')
-    + (infos.some(e => e.source === 'game') ? '<br>Assetto Corsa, ACC and AC Rally: the gear shows on the numpad and RPM on the F-keys while you drive. In menus this layer is see-through. The game\'s telemetry is only read, never changed.' : '')
+    + (infos.some(e => e.name.startsWith('Rocket Mania')) ? rocketNote() : '')
+    + (infos.some(e => e.name.startsWith('Assetto')) ? '<br>Assetto Corsa, ACC and AC Rally: the gear shows on the numpad and RPM on the F-keys while you drive. In menus this layer is see-through. The game\'s telemetry is only read, never changed.' : '')
     + errs.map(([k, v]) => `<br><span style="color:var(--accent)">${k} capture failed: ${esc(v)}</span>`).join('');
 }
 
@@ -594,6 +771,11 @@ async function refresh() {
   if (ST.side && Date.now() - sideEditedAt > 3000) { side = ST.side.slice(); showSide(); }
   if (ST.custom && (!draft || (!draftDirty && tab !== 'perkey'))) draft = ST.custom.map(c => c.slice());
   if (!ST.live) liveFrame = null;
+  const presetSig = JSON.stringify(Object.keys(ST.live_presets || {}));
+  if (presetSig !== refresh.presetSig && document.activeElement !== $('#preset')) {
+    refresh.presetSig = presetSig; buildPresetMenu();
+    if (myPreset && !(myPreset in (ST.live_presets || {}))) { myPreset = null; showPresetButtons(); }
+  }
   const mediaSig = JSON.stringify(ST.media);
   if (mediaSig !== refresh.mediaSig) { refresh.mediaSig = mediaSig; renderLayers(); }
   showParams(); renderProfiles(); updateLiveNote(); render();

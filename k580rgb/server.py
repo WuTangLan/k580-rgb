@@ -59,6 +59,26 @@ def make_handler(controller, automation, port):
         }
         controller.save_config()
 
+    def save_preset(body):
+        name = str(body['name']).strip()[:40]
+        layers = body['layers']
+        if not name:
+            raise ValueError('empty name')
+        if not isinstance(layers, list) or not 1 <= len(layers) <= 8:
+            raise ValueError('a preset needs 1-8 layers')
+        for layer in layers:
+            if not isinstance(layer, dict) or layer.get('effect') not in effects.EFFECTS:
+                raise ValueError('unknown effect in preset')
+        presets = controller.config.setdefault('live_presets', {})
+        if name not in presets and len(presets) >= 100:
+            raise ValueError('too many presets (100 max)')
+        presets[name] = layers
+        controller.save_config()
+
+    def delete_preset(body):
+        controller.config.setdefault('live_presets', {}).pop(body['name'], None)
+        controller.save_config()
+
     def delete_profile(body):
         controller.config['profiles'].pop(body['name'], None)
         controller.config['rules'] = [r for r in controller.config['rules'] if r['profile'] != body['name']]
@@ -85,6 +105,15 @@ def make_handler(controller, automation, port):
         from . import media
         media.delete(body['name'])
 
+    def rocket_mania_status():
+        from .games import ROCKET_MANIA as rm
+        now = time.monotonic()
+        last = {}
+        if rm.spotter:
+            for t, kind in rm.spotter.events:
+                last[kind] = round(now - t, 1)
+        return {'folder': rm.folder, 'error': rm.error, 'last': last}
+
     def media_list():
         if not sources.available()['media']:
             return []
@@ -96,6 +125,8 @@ def make_handler(controller, automation, port):
         '/api/apply': apply,
         '/api/profiles/save': save_profile,
         '/api/profiles/delete': delete_profile,
+        '/api/presets/save': save_preset,
+        '/api/presets/delete': delete_preset,
         '/api/profiles/apply': lambda b: controller.apply_profile(b['name']),
         '/api/automation': set_automation,
         '/api/live': live,
@@ -134,6 +165,8 @@ def make_handler(controller, automation, port):
             elif self.path == '/api/state':
                 self._send(200, {**controller.snapshot(), 'recent_apps': automation.recent_apps,
                                  'media': media_list(),
+                                 'live_presets': controller.config.get('live_presets', {}),
+                                 'rocket_mania': rocket_mania_status(),
                                  'source_errors': {'audio': sources.AUDIO.error, 'screen': sources.SCREEN.error}})
             elif self.path == '/api/frames':
                 self._stream_frames()

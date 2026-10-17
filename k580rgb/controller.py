@@ -31,6 +31,7 @@ DEFAULT_CONFIG = {
     'default_profile': None,
     'automation': False,
     'flash_writes': 0,
+    'live_presets': {},          # name -> layer list (your own live-effect presets)
 }
 
 
@@ -137,6 +138,8 @@ class Controller:
         pending, self._pending = self._pending, None
         params, custom, side = pending.get('params'), pending.get('custom'), pending.get('side')
         before = self.dev.flash_writes
+        if not self.streaming:
+            self._release_direct()        # built-in changes must be visible
         try:
             # colours first so switching to Custom never flashes the old layout
             if custom is not None and custom != self.custom:
@@ -205,13 +208,19 @@ class Controller:
                 old.close()
             if not (new and old):
                 self.live_started = time.monotonic()   # keep time running while tweaking
-            stopping = self.streaming and not (stream and new)
             self.live_stream = bool(stream and new)
-            if stopping:
-                try:
-                    self.dev.direct_off()
-                except Exception as e:
-                    self._lost(e)
+            if not self.live_stream:
+                self._release_direct()
+
+    def _release_direct(self):
+        """Hand the LEDs back to the keyboard's own effects right away (no flash write).
+        Sent whenever we're not streaming, even if we think we weren't: it's harmless
+        and makes sure no stale direct-mode frame stays on the keyboard."""
+        if self.direct and self.status == 'connected':
+            try:
+                self.dev.direct_off()
+            except Exception as e:
+                self._lost(e)
 
     @property
     def streaming(self):
@@ -239,7 +248,8 @@ class Controller:
                 if self.streaming:
                     try:
                         with self.lock:
-                            self.dev.direct_frame(with_indicators(frame))
+                            if self.streaming and self.live is eff:   # re-check: may have stopped meanwhile
+                                self.dev.direct_frame(with_indicators(frame))
                     except Exception as e:
                         self._lost(e)
             delay = nxt - time.monotonic()

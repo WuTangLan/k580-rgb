@@ -55,6 +55,7 @@ class AudioSource(Source):
         self.volume = 0.0
         self.beats = 0            # increments on every detected beat
         self.beat_time = 0.0      # time.monotonic() of the last beat
+        self.listeners = []       # callables(mono float32 block @ RATE) e.g. game sound detectors
 
     def run(self, stop):
         import soundcard as sc
@@ -75,6 +76,8 @@ class AudioSource(Source):
             with mic.recorder(samplerate=self.RATE, channels=2, blocksize=self.BLOCK) as rec:
                 while not stop.is_set():
                     data = rec.record(numframes=self.BLOCK).mean(axis=1)
+                    for listener in list(self.listeners):
+                        listener(data)
                     spec = np.abs(np.fft.rfft(data * window))
                     raw = np.array([spec[i].mean() for i in idx]) * np.linspace(1, 3, AUDIO_BANDS)
                     peak = max(peak * 0.995, raw.max(), 1e-3)         # slow auto gain

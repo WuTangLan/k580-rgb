@@ -50,7 +50,9 @@ The side strips aren't part of the Custom effect; set them in the Lighting tab.
   the on-screen keyboard. Nothing is written to flash.
 - Build a scene from **layers**: each has an effect, speed, opacity, blend mode
   (Lighten / Add / Normal) and **Applies to** (All, Keys only, Side strips only).
-- **Load a preset** for ready-made scenes.
+- **Load a preset** for ready-made scenes. **Save as preset…** stores your current layers (effects, colors,
+  settings, blend, opacity, zones) under a name. They're listed under *My presets*, are kept in
+  `%APPDATA%\k580rgb\config.json`, and can be overwritten or deleted.
 - **Save frame to keyboard** stores the current frame as a per-key layout (Custom effect).
 - If the keyboard is unplugged or the PC sleeps, streaming pauses ("Reconnecting…")
   and resumes on its own.
