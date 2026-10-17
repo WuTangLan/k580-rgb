@@ -83,8 +83,68 @@ def compare_static(cs):
     return bad
 
 
+def compare_macros():
+    """Macro and keymap bytes go to flash: they must match exactly."""
+    from k580rgb import macros
+    default = bytes((i * 7 + 3) & 0xFF for i in range(macros.KEYMAP_SIZE))      # stand-in factory keymap
+    ms = [{'name': ' Copy all ', 'repeat': 1, 'events': [['down', 0xE0, 10], ['down', 0x04, 20], ['up', 0x04, 0], ['up', 0xE0, 30]]},
+          {'name': 'held', 'repeat': 3, 'events': [['down', 0xE1, 0], ['down', 0x0B, 5000], ['up', 0x0B, 41000]]},
+          {'name': 'typed', 'events': keycodes.text_events('Hello, World!', 12)}]
+    assign = {'100': {'type': 'macro', 'macro': 'held'}, '6': {'type': 'key', 'code': 0x29},
+              '12': {'type': 'key', 'code': 0xE6}, '125': {'type': 'media', 'code': 0xCD}, '40': {'type': 'disabled'},
+              '88': {'type': 'macro', 'macro': 'deleted one'}, '35': {'type': 'key', 'code': 4}}
+    norm = [macros.normalize_macro(m) for m in ms]
+    names = [m['name'] for m in norm]
+    assigned = macros.normalize_assignments(assign, names)
+    image, index = macros.compile_macros(norm)
+    py = json.loads(json.dumps({'normalized': norm, 'assignments': assigned, 'image': image.hex(),
+                                'keymap': macros.build_keymap(default, assigned, index).hex(), 'index': index}))
+    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+        json.dump({'macros': ms, 'assignments': assign, 'default_keymap': default.hex()}, f)
+    try:
+        cs = json.loads(subprocess.check_output([PROBE, 'macros', f.name]))
+    finally:
+        os.remove(f.name)
+    bad = 0
+    for k in py:
+        same = py[k] == cs[k]
+        bad += not same
+        print('%-4s macros %s' % ('ok' if same else 'FAIL', k))
+        if not same:
+            print('       py %s\n       cs %s' % (json.dumps(py[k])[:300], json.dumps(cs[k])[:300]))
+    return bad
+
+
+def compare_media():
+    """GDI+ and Pillow resample differently, so GIF frames only need to be close; same for text glyphs."""
+    from k580rgb import media
+    bad = 0
+    times = [0.0, 0.37, 1.1, 2.9]
+    for name in ('Pac-Man chase.gif', 'Fireworks.gif', 'Bouncing balls.gif'):
+        for fit in ('Cover', 'Contain', 'Stretch'):
+            clip = media.load(name, fit)
+            cs = json.loads(subprocess.check_output([PROBE, 'media', name, fit, ','.join(map(str, times))]))
+            diffs = [abs(a - b) for t, fc in zip(times, cs) for pa, ca in zip(clip.at(t), fc) for a, b in zip(pa, ca)]
+            mean = sum(diffs) / len(diffs)
+            ok = mean < 6
+            bad += not ok
+            print('%-4s media %-22s %-8s mean channel diff %5.2f, max %3d' % ('ok' if ok else 'FAIL', name, fit, mean, max(diffs)))
+    for text, size in (('HELLO K580', 0.97), ('Typing is fun', 0.55)):
+        strip = media.TextStrip(text, size)
+        offsets = [0, 13, 57, 140]
+        cs = json.loads(subprocess.check_output([PROBE, 'text', text, str(size), ','.join(map(str, offsets))]))
+        diffs = [abs(a - b) for o, fc in zip(offsets, cs) for a, b in zip(strip.coverage(o), fc)]
+        mean = sum(diffs) / len(diffs)
+        ok = mean < 0.1           # FreeType hints glyph advances, GDI+ does not: periods differ by 1-3 px
+        bad += not ok
+        print('%-4s text  %-31s mean coverage diff %.3f, max %.2f' % ('ok' if ok else 'FAIL', repr(text), mean, max(diffs)))
+    return bad
+
+
 def main():
     bad = compare_static(json.loads(subprocess.check_output([PROBE, 'static'])))
+    bad += compare_macros()
+    bad += compare_media()
 
     sp = specs()
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:

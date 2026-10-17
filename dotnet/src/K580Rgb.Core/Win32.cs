@@ -17,6 +17,28 @@ public static class Win32
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool QueryFullProcessImageNameW(IntPtr h, uint flags, StringBuilder name, ref uint size);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr CreateWaitableTimerExW(IntPtr attributes, string? name, uint flags, uint access);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetWaitableTimer(IntPtr timer, ref long dueTime, int period, IntPtr completion, IntPtr arg, bool resume);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+
+    [ThreadStatic] static IntPtr _timer;
+
+    /// <summary>Sleep with ~1 ms precision (Thread.Sleep follows the 15.6 ms system tick).</summary>
+    public static void PreciseSleep(TimeSpan delay)
+    {
+        if (delay <= TimeSpan.Zero)
+            return;
+        if (_timer == IntPtr.Zero)
+            _timer = CreateWaitableTimerExW(IntPtr.Zero, null, 0x2 /* HIGH_RESOLUTION */, 0x1F0003 /* TIMER_ALL_ACCESS */);
+        long due = -delay.Ticks;                       // relative, in 100 ns units
+        if (_timer == IntPtr.Zero || !SetWaitableTimer(_timer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false))
+            Thread.Sleep(delay);
+        else
+            WaitForSingleObject(_timer, 0xFFFFFFFF);
+    }
+
     public static bool IsDown(int vk) => (GetAsyncKeyState(vk) & 0x8000) != 0;
 
     /// <summary>(num, caps, scroll) lock state from the OS.</summary>

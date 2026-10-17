@@ -6,5 +6,6 @@
     <LangVersion>latest</LangVersion>
     <Version>0.5.0</Version>
     <Product>K580 RGB</Product>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 </Project>

@@ -28,6 +28,53 @@ if (args is ["static"])
     }.ToJsonString());
     return 0;
 }
+if (args is ["macros", var macroPath])
+{
+    // {macros, assignments, default_keymap (hex)} -> {normalized, image (hex), index, keymap (hex)}
+    var spec = JsonNode.Parse(File.ReadAllText(macroPath))!;
+    var ms = spec["macros"]!.AsArray().Select(Macros.NormalizeMacro).ToList();
+    var assigned = Macros.NormalizeAssignments(spec["assignments"]!.AsObject(), [.. ms.Select(m => (string)m["name"]!)]);
+    var (image, index) = Macros.Compile(ms);
+    var keymap = Macros.BuildKeymap(Convert.FromHexString((string)spec["default_keymap"]!), assigned, index);
+    Console.WriteLine(new JsonObject
+    {
+        ["normalized"] = new JsonArray([.. ms]), ["assignments"] = assigned,
+        ["image"] = Convert.ToHexString(image).ToLowerInvariant(), ["keymap"] = Convert.ToHexString(keymap).ToLowerInvariant(),
+        ["index"] = new JsonObject(index.Select(kv => KeyValuePair.Create(kv.Key, (JsonNode?)kv.Value))),
+    }.ToJsonString());
+    return 0;
+}
+if (args is ["media", var mediaName, var fit, var times])
+{
+    var clip = K580Rgb.Core.Sources.Media.Load(mediaName, fit);
+    Console.WriteLine(new JsonArray([.. times.Split(',').Select(t => (JsonNode)new JsonArray([..
+        clip.At(double.Parse(t, System.Globalization.CultureInfo.InvariantCulture)).Select(c => (JsonNode)new JsonArray(c.R, c.G, c.B))]))]).ToJsonString());
+    return 0;
+}
+if (args is ["text", var text, var height, var offsets])
+{
+    var strip = new K580Rgb.Core.Sources.TextStrip(text, double.Parse(height, System.Globalization.CultureInfo.InvariantCulture));
+    Console.Error.WriteLine($"period {strip.Period}");
+    Console.WriteLine(new JsonArray([.. offsets.Split(',').Select(o => (JsonNode)new JsonArray([..
+        strip.Coverage(double.Parse(o, System.Globalization.CultureInfo.InvariantCulture)).Select(v => (JsonNode)Math.Round(v, 4))]))]).ToJsonString());
+    return 0;
+}
+if (args is ["audio"])
+{
+    // capture what you hear for 3 s: block count and band levels (touches no keyboard)
+    var audio = K580Rgb.Core.Sources.Capture.Audio;
+    int blocks = 0;
+    audio.AddListener(_ => Interlocked.Increment(ref blocks));
+    audio.Acquire();
+    for (int i = 0; i < 6; i++)
+    {
+        Thread.Sleep(500);
+        Console.WriteLine($"{(i + 1) * 0.5:F1}s blocks {blocks} rate {audio.SampleRate} error {audio.Error ?? "-"} " +
+                          $"levels {string.Join(" ", audio.Levels.Select(l => l.ToString("F2")))}");
+    }
+    audio.Release();
+    return 0;
+}
 if (args is ["frames", var specPath])
 {
     // [{name, layers, presses: [[index, t]...], times: [...]}] -> {name: [[r,g,b] x 126 per time]}

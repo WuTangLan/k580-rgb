@@ -4,10 +4,22 @@
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>K580Rgb</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- screen capture and lock-state polling don't need a visual-styles manifest beyond the default -->
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\K580Rgb.Core\K580Rgb.Core.csproj" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+    <EmbeddedResource Include="app.ico" LogicalName="K580Rgb.app.ico" />
   </ItemGroup>
+
+  <!-- WinForms only: the package also references its WPF control, which conflicts with WindowsBase -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

@@ -42,9 +42,9 @@ public static class EffectRegistry
             foreach (var node in specs)
             {
                 var s = node!.AsObject();
-                var eff = Create((string)s["effect"]!, s["args"] as JsonObject, (double?)s["speed"] ?? 1.0);
+                var eff = Create((string)s["effect"]!, s["args"] as JsonObject, JsonNum.Get(s["speed"], 1.0));
                 ZoneMask.TryGetValue((string?)s["zone"] ?? "All", out var mask);
-                layers.Add(new(eff, (string?)s["blend"] ?? "Lighten", ColorMath.Clamp((double?)s["opacity"] ?? 1.0), mask));
+                layers.Add(new(eff, (string?)s["blend"] ?? "Lighten", ColorMath.Clamp(JsonNum.Get(s["opacity"], 1.0)), mask));
             }
         }
         catch

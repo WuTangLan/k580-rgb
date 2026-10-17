@@ -70,14 +70,14 @@ public sealed class EffectArgs
 
     public double Num(string name)
     {
-        var n = _values[name];
-        if (n is JsonValue v)
+        try
         {
-            if (v.TryGetValue(out double d)) return d;
-            if (v.TryGetValue(out string? s) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) return d;
-            if (v.TryGetValue(out bool b)) return b ? 1 : 0;
+            return JsonNum.Get(_values[name]);
         }
-        throw new FormatException($"'{name}' must be a number");
+        catch (FormatException)
+        {
+            throw new FormatException($"'{name}' must be a number");
+        }
     }
 
     public Rgb Color(string name) => ColorMath.HexToRgb(Str(name));
@@ -101,10 +101,10 @@ public abstract class Effect(EffectArgs a) : IDisposable
     protected readonly EffectArgs P = a;
     protected readonly double Speed = a.Speed;
 
-    public EffectInfo Info => P.Info;
-    public string Name => Info.Name;
+    public EffectInfo Definition => P.Info;
+    public string Name => P.Info.Name;
     /// <summary>Wants key presses.</summary>
-    public virtual bool Reactive => Info.Reactive;
+    public virtual bool Reactive => P.Info.Reactive;
 
     protected virtual Rgb? Color(Key key, double t) => throw new NotImplementedException();
 
