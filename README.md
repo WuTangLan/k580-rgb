@@ -8,10 +8,14 @@ both side strips. The stock effects and presets keep working.
   and automatic switching by the app in focus. These run with no software and are saved on the keyboard.
 - **Live effects:** real-time layered animations: rainbow wave, aurora, fire, black hole, plasma,
   GIF playback, scrolling text, 7 music modes, screen ambience, key-press reactions,
-  an Assetto Corsa gear/RPM display and generic game modes.
-- **Direct mode:** a 156-byte addition to the stock firmware that lets the PC stream frames
+  Battlefield combat effects (hits, firing, explosions), an Assetto Corsa gear/RPM display and generic game modes.
+- **Macros and key assignments:** record or write macros (keys, combos, delays, repeat, text), and put them
+  or media keys on G1–G5 or any key. They're stored on the keyboard (stock firmware), and the Fn shortcuts stay intact.
+- **Tray app:** runs in the system tray (the icon can be hidden). Quick presets, built-in effects, brightness, profiles, start with Windows.
+- **Direct mode:** a 196-byte addition to the stock firmware that lets the PC stream frames
   to the LEDs in RAM. Stock behaviour is unchanged, and the keyboard returns to its own effect
-  about 2.5 s after the app stops.
+  about 2.5 s after the app stops. Patch v2 also removes the stock Fn + PrtSc instant factory reset
+  and fixes the reset's profile 2/3 keymap bug.
 
 **See [USAGE.md](USAGE.md)** for setup, the app, and how to install or remove direct mode.
 **See [NOTES.md](NOTES.md)** for the reverse-engineering notes: protocol, memory map, patch design.

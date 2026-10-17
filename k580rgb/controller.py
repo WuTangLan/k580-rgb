@@ -9,8 +9,8 @@ import os
 import threading
 import time
 
-from . import effects
-from .device import LED_INDICATOR_A, LED_INDICATOR_B, NUM_LEDS, K580, Params
+from . import effects, macros
+from .device import LED_INDICATOR_A, LED_INDICATOR_B, NUM_LEDS, PROFILES, K580, Params
 
 log = logging.getLogger('k580rgb')
 from .layout import BY_INDEX
@@ -33,6 +33,10 @@ DEFAULT_CONFIG = {
     'flash_writes': 0,
     'live_presets': {},          # name -> layer list (your own live-effect presets)
     'last_live': None,           # {'layers': [...]} running on the keyboard at last exit
+    'macros': [],                # [{name, events: [[down|up, usage, delay_ms]...], repeat}]
+    'key_assignments': {},       # matrix pos -> {type: macro|key|media|disabled, macro|code}
+    'tray_icon': True,           # show the tray icon (off: runs hidden; start the app again to open it)
+    'open_browser': True,        # open the UI when the app starts
 }
 
 
@@ -51,6 +55,8 @@ class Controller:
         self.params = None               # what the keyboard holds
         self.custom = None
         self.side = None                 # side strips: (mode, speed, color index)
+        self.keymaps = None              # the keyboard's keymap per hardware profile
+        self.default_keymap = None       # factory keymap (firmware table)
         self._pending = None             # (params, custom) waiting to be written
         self._pending_at = 0.0
         self._last_write = 0.0
@@ -106,6 +112,8 @@ class Controller:
         self.custom = self.dev.read_custom(self.profile)
         self.side = self.dev.read_side(self.profile)
         self.direct = self.dev.supports_direct()
+        self.default_keymap = self.dev.read_default_keymap()
+        self.keymaps = [self.dev.read_keymap(p) for p in range(PROFILES)]
         self.status = 'connected'
         return True
 
@@ -197,6 +205,48 @@ class Controller:
         params = self.desired()[0]
         params = Params.from_dict({**params.to_dict(), 'mode': CUSTOM})
         self.request(params, leds_only(frame))
+
+    # -- keys and macros ---------------------------------------------------------------
+
+    def wanted_keymap(self):
+        index = {m['name']: n for n, m in enumerate(self.config['macros'])}
+        return macros.build_keymap(self.default_keymap, self.config['key_assignments'], index)
+
+    def keys_in_sync(self):
+        """Per hardware profile: does the keyboard hold the keymap the app expects?"""
+        if not self.keymaps or not self.default_keymap:
+            return None
+        want = self.wanted_keymap()
+        return [km == want for km in self.keymaps]
+
+    def save_keys(self, macro_list, assignments):
+        """Validate, store in the config and write macros + keymaps (all 3 profiles) to the keyboard."""
+        ms = [macros.normalize_macro(m) for m in macro_list]
+        names = [m['name'] for m in ms]
+        if len(set(names)) != len(names):
+            raise ValueError('two macros have the same name')
+        assigned = macros.normalize_assignments(assignments, names)
+        image, index = macros.compile_macros(ms)
+        with self.lock:
+            if self.status != 'connected':
+                raise IOError('keyboard not connected')
+            keymap = macros.build_keymap(self.default_keymap, assigned, index)
+            before = self.dev.flash_writes
+            try:
+                old = self.dev.read_macros(len(image))
+                self.dev.write_macros(image, old)
+                for p in range(PROFILES):
+                    self.dev.write_keymap(p, keymap, self.keymaps[p])
+                # read everything back: a flash write that didn't land must not look saved
+                self.keymaps = [self.dev.read_keymap(p) for p in range(PROFILES)]
+                if self.dev.read_macros(len(image)) != image or any(km != keymap for km in self.keymaps):
+                    raise IOError('the keyboard did not store everything; please save again')
+            finally:
+                self.config['flash_writes'] += self.dev.flash_writes - before
+                self.config['macros'], self.config['key_assignments'] = ms, assigned
+                self.save_config()
+            log.info('keys saved: %d macros, %d remapped keys, %d packets written',
+                     len(ms), len(assigned), self.dev.flash_writes - before)
 
     # -- live software effects -------------------------------------------------------
 
@@ -296,6 +346,7 @@ class Controller:
                 'rules': self.config['rules'],
                 'default_profile': self.config['default_profile'],
                 'automation': self.config['automation'],
+                'keys_in_sync': self.keys_in_sync(),
                 'live': self.live.name if self.live else None,
                 'live_stream': self.live_stream,       # wanted
                 'streaming': self.streaming,           # actually reaching the keyboard

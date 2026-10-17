@@ -36,8 +36,34 @@ Streaming per-key frames through 0x11 therefore programs flash on every packet, 
   `[0]` mode, `[1]` brightness 0-5 (table 0x8565: 00 20 40 80 BE FF), `[2]` speed 0-5 (0 fastest),
   `[3]` direction (0 / non-zero), `[4]` random colors flag, `[5..7]` R, G, B.
 - Custom (mode 0x14) colors for profile p: 0xA600 + p*0x200 (cmd 0x10/0x11), 3 bytes R,G,B per LED index.
-- Keymap 0xA100: 126 x 3-byte entries, column-major (col*6 + row); a second layer (Fn) follows at 0xA27A.
-  Types: `02 02 kk` HID key, `02 01 mm` modifier bit, `03 cc 00` consumer, `05 1A 0n` macro G1-G5.
+- Keymap per profile p at 0xA100 + p*0x17A (cmd 0x07/0x08 offset p*0x17A): 126 x 3-byte entries, one per
+  matrix position pos = col*6 + row. The key handler (0x3CE0) reads it straight from flash, so writes apply at once.
+  Types: `02 02 kk` HID key, `02 01 mm` modifier bit, `02 00 00` nothing, `03 lo hi` consumer (media),
+  `05 xx yy` firmware function (0x32E4): `05 01 nn` play software macro nn, `05 1A 0n` REC slot of G1-G5,
+  `05 19 00` REC, `05 02 02` Fn, `05 18 18` (pos 120, toggles settings byte 0x12).
+  The factory keymap is the read-only table at 0x90D8 (cmd 0x0F offset 0).
+- Extra keys without LEDs: G1 pos 100, G2 88, G3 99, G4 93, G5 87 (table 0x810E), REC 78,
+  media keys Previous 114, Next 123, Play/Pause 125.
+- **Fn layer is fixed in firmware**: 31 matrix positions at 0x7E98, actions (3 bytes, same format) at 0x7EB7.
+  While Fn is held a match wins over the keymap, so remapping keys never affects it. Fn+F1..F12 = consumer
+  0x183, vol-, vol+, mute, stop, prev, play, next, 0x18A mail, 0x223 home, 0x192 calculator, 0x221 search;
+  Fn+Win `05 04` (Win lock), **Fn+PrtSc `05 08` = immediate factory reset** (sets flag bit 27 of 0x20000000,
+  the main loop then calls 0x7382), Fn+arrows / `-` / `=` brightness and speed, Fn+Ins..PgDn `05 11..16`,
+  Fn+Pause `05 1D` side strips, Fn+Space `05 17`, Fn+` `05 0F`, Fn+REC `05 1B`, Fn+ScrLk `05 1E`.
+- **Factory reset bug (0x7382)**: it rewrites the header, params, custom colors and macros, and copies the factory keymap to
+  0xA100, **0xA300 and 0xA500**, but profiles 2/3 are read from 0xA27A/0xA3F4. After a reset (Fn+PrtSc)
+  82 keys of profiles 2 and 3 are scrambled. Seen on this keyboard; the app's Keys & macros save rewrites them.
+
+## Macros
+- **Software macros** (cmd 0x09/0x0A, flash 0xAC00, played by 0x419C): u16 offset at 0xAC10 + n*2 (relative to 0xAC00)
+  -> header `[count lo, count hi, repeat, 0]` + 4-byte events
+  `[delay lo, 0x20 | 0x80 if release | delay bits 8-11, 1 = modifier bit / 2 = key, code]`.
+  Triggered by keymap entry `05 01 nn` on key press. One event per 16-SysTick tick (4.8 ms); the delay (after the
+  event) counts down every second tick, so 1 unit = 9.6 ms (max 0xFFF = 39 s). Repeat byte > 1 replays.
+  The factory reset clears 0xAC00-0xAC7F, so the app keeps at most 48 macros there and puts data from 0xAC80.
+- **REC macros** (on the keyboard): REC, then a G-key records into 0xC800 + slot*64 (key codes only, FE/FF
+  modifier markers, no timing); a `05 1A 0n` entry plays slot n. The REC capture matches the matrix position
+  (table 0x810E), not the keymap.
 - LEDs: 107 (list at 0x8232), index = row*21 + col. No LEDs on G1-G5, media keys, or matrix slot (5,7).
 - Live writes via 0x06/0x11 take effect immediately; no begin/end commands are needed (same as OpenRGB).
 
@@ -73,7 +99,14 @@ Streaming per-key frames through 0x11 therefore programs flash on every packet, 
 ## Direct-mode patch (`tools/patch.py`)
 - Cmd `0x20`: len (<= 56) bytes at plane offset (0..377) go into the display planes. len 0 = direct off. Errors set byte[7]=0xFF (stock firmware also answers 0xFF, which is how to detect it).
 - Each frame arms a deadline of +0x2000 ticks (~2.5 s). While it hasn't passed, present() is skipped; after that the stock effects resume.
-- State at `0x20001F00` {deadline, magic `0xD1EC7C0D`}. Hooks: `bl` at `0x1CF6` -> `0xD400`, `bl` at `0x6A8A` -> `0xD402`. 156 bytes of code at 0xD400.
+- State at `0x20001F00` {deadline, magic `0xD1EC7C0D`, v2: tick counter}. Hooks: `bl` at `0x1CF6` -> `0xD400`, `bl` at `0x6A8A` -> `0xD402`.
+- v1 (flashed 2026-10-17, 156 bytes) used the stock tick 0x20000040 for the deadline, but 0x280 resets that counter every
+  16 ticks, so the fallback never fired.
+- v2 (196 bytes): vector 15 (SysTick) -> wrapper at 0xD404 that counts its own ticks at 0x20001F08 and then runs the stock
+  handler; a deadline more than 0x2000 ticks ahead counts as expired (stale state after a warm reset).
+  Also: Fn table entry 13 (PrtSc) gets position 0xFE so Fn+PrtSc no longer factory-resets, and the factory reset's
+  keymap writes at 0x73EA/0x73F8 call stubs that return 0xA27A/0xA3F4. `emu_test.py` covers all of it.
+- 2026-10-17: flashed v2 (built with the device's settings), readback matched, direct mode answers. v1 kept as `build/k580_direct_v1.bin`.
 - `tools/emu_test.py` emulates stock vs patched firmware (unicorn): all stock commands give identical RAM, replies and flash registers.
 
 ## Files

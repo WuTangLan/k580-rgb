@@ -87,6 +87,23 @@
   .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap;
             background: #2a2210; border: 1px solid #5a4510; color: var(--warn); border-radius: 10px;
             padding: 10px 14px; margin-bottom: 14px; }
+  .cols { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(380px, 1.3fr); gap: 28px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .cols h2:first-child { margin-top: 6px; }
+  #assign select { max-width: 260px; }
+  #assign tr.sel td { background: var(--panel2); }
+  .ev { max-width: none; }
+  .ev td { padding: 3px 6px; }
+  .ev input[type=number] { width: 80px; }
+  input[type=number] { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+                       border-radius: 6px; padding: 6px 8px; font: inherit; width: 70px; }
+  .ev .x { background: none; border: 0; color: var(--dim); cursor: pointer; font-size: 15px; padding: 0 4px; }
+  .ev .x:hover { color: var(--text); }
+  button.btn.rec { color: var(--accent); }
+  button.btn.rec.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--panel2); color: var(--dim); margin-left: 6px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; }
+  .opt small { display: block; color: var(--dim); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2);
            border: 1px solid var(--line); padding: 8px 16px; border-radius: 8px; display: none; }
 </style>
@@ -109,7 +126,9 @@
     <button data-tab="lighting" class="on">Lighting</button>
     <button data-tab="perkey">Per-key</button>
     <button data-tab="live">Live effects</button>
+    <button data-tab="keys">Keys &amp; macros</button>
     <button data-tab="profiles">Profiles &amp; automation</button>
+    <button data-tab="settings">Settings</button>
   </nav>
 
   <section id="lighting" class="on">
@@ -175,6 +194,78 @@
     <p class="note" id="live-note"></p>
   </section>
 
+  <section id="keys">
+    <div class="banner" id="keys-banner" style="display:none"><span id="keys-banner-text"></span>
+      <button class="btn" id="keys-repair">Save to keyboard</button></div>
+    <div class="row" style="margin-bottom:12px">
+      <span class="note" style="margin:0">Macros and key assignments are saved on the keyboard and work without the app.
+        Fn combinations (Fn + F1–F12 media keys, Fn + arrows, …) always keep working.</span>
+      <div class="spacer"></div>
+      <span id="keys-dirty" class="pill warn" style="display:none">not saved yet</span>
+      <button class="btn" id="keys-revert">Revert</button>
+      <button class="btn primary" id="keys-save">Save to keyboard</button>
+    </div>
+    <div class="cols">
+      <div>
+        <h2>Key assignments</h2>
+        <table><thead><tr><th>Key</th><th>Does</th><th></th></tr></thead><tbody id="assign"></tbody></table>
+        <p class="note">Click any key on the keyboard above to remap it too. By default G1–G5 play what you recorded
+          with REC on the keyboard; REC recording keeps working for G-keys left on <i>Default</i>.
+          The Fn key can't be remapped, so the Fn shortcuts always stay available.</p>
+      </div>
+      <div>
+        <h2>Macros</h2>
+        <div class="row">
+          <select id="macro-sel"></select>
+          <button class="btn" id="macro-new">+ New macro</button>
+          <button class="btn" id="macro-dup">Duplicate</button>
+          <button class="btn" id="macro-del">Delete</button>
+        </div>
+        <div id="macro-edit" style="margin-top:12px">
+          <div class="row">
+            <input type="text" id="m-name" placeholder="Macro name" maxlength="40">
+            <label class="row">Play <input type="number" id="m-repeat" min="1" max="255" value="1"> time(s)</label>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn rec" id="m-rec">● Record</button>
+            <label class="row"><input type="checkbox" id="m-rec-timing" checked> Keep my timing</label>
+            <span class="note" style="margin:0" id="m-rec-note"></span>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <input type="text" id="m-text" placeholder="Text to type, e.g. gg wp" style="flex:1;min-width:180px">
+            <button class="btn" id="m-text-add">Add text</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <select id="m-act"><option value="press">Press</option><option value="down">Hold down</option><option value="up">Release</option></select>
+            <select id="m-key"></select>
+            <label class="row">then wait <input type="number" id="m-wait" min="0" value="30"> ms</label>
+            <button class="btn" id="m-key-add">Add</button>
+          </div>
+          <table class="ev" style="margin-top:12px"><thead><tr><th>#</th><th>Action</th><th>Key</th><th>Then wait (ms)</th><th></th></tr></thead>
+            <tbody id="m-events"></tbody></table>
+          <div class="row" style="margin-top:8px"><button class="btn" id="m-clear">Clear events</button>
+            <span class="note" style="margin:0" id="m-info"></span></div>
+        </div>
+        <p class="note">Macros play keys and key combinations with delays (steps of about 10 ms, up to 39 s per step) and
+          can repeat. The browser can't record the Windows key, Print Screen or Fn; add those with <i>Add</i>.
+          Text is typed with US-layout keys. Keys still held at the end of a macro are released automatically.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="settings">
+    <h2>App</h2>
+    <label class="opt"><input type="checkbox" id="set-tray"><span>Show the tray icon
+      <small>Hidden: the app keeps running in the background. Start it again (run.bat) to open this page.</small></span></label>
+    <label class="opt"><input type="checkbox" id="set-browser"><span>Open this page when the app starts
+      <small>Off: the app starts quietly; use the tray icon to open it.</small></span></label>
+    <label class="opt"><input type="checkbox" id="set-autostart"><span>Start with Windows
+      <small>Starts quietly at login (no page opens).</small></span></label>
+    <div class="row" style="margin-top:16px"><button class="btn" id="quit-app">Quit K580 RGB</button>
+      <span class="note" style="margin:0" id="app-version"></span></div>
+    <p class="note">Settings are stored in %APPDATA%\k580rgb\config.json, errors in k580rgb.log in the same folder.</p>
+  </section>
+
   <section id="profiles">
     <h2>Saved profiles</h2>
     <div class="row"><input type="text" id="pname" placeholder="Profile name"><button class="btn primary" id="psave">Save current lighting</button></div>
@@ -235,6 +326,7 @@ function buildKeyboard() {
     draft[+el.dataset.i] = rgb($('#brush').value); draftDirty = true; render();
   };
   kb.addEventListener('pointerdown', e => {
+    if (tab === 'keys') { const el = e.target.closest('.key'); if (el) pickKeyLed(+el.dataset.i); return; }
     if (tab !== 'perkey') return;
     if (e.button === 2) {
       const el = e.target.closest('.key'); if (el) $('#brush').value = hex(draft[+el.dataset.i]);
@@ -248,6 +340,7 @@ function buildKeyboard() {
 }
 
 function shownColors() {
+  if (tab === 'keys') return keysColors();
   if (tab === 'live' && liveFrame) return liveFrame;
   if (tab === 'perkey' && draft) return draft;
   if (!params) return null;
@@ -281,7 +374,7 @@ function hsvRgb(h, v) {
 }
 function render() {
   const cs = shownColors();
-  $('#kb').classList.toggle('paint', tab === 'perkey');
+  $('#kb').classList.toggle('paint', tab === 'perkey' || tab === 'keys');
   for (const [i, el] of Object.entries(keyEls)) {
     const c = cs && cs[i] ? cs[i] : [0, 0, 0];
     const lit = c[0] + c[1] + c[2] > 30;
@@ -673,6 +766,7 @@ function updateLiveNote() {
     + (infos.some(e => e.source === 'audio') ? '<br>Audio layers react to whatever your PC is playing (default output device).' : '')
     + (infos.some(e => e.source === 'screen') ? '<br>Screen layers sample your main monitor about 15 times a second. The image is only averaged into colors and never stored.' : '')
     + (infos.some(e => e.name.startsWith('Rocket Mania')) ? rocketNote() : '')
+    + (infos.some(e => e.name.startsWith('Battlefield')) ? '<br>Battlefield: reacts while the game window is focused to red damage at your screen edges (hits come from that side), loud booms in the game audio (explosions), and your mouse and R / G keys (firing, aiming, reload, grenade). Set the game to <b>Borderless</b> or windowed in its video settings so the screen can be read; exclusive fullscreen may show as black. Nothing is read from the game itself.' : '')
     + (infos.some(e => e.name.startsWith('Assetto')) ? '<br>Assetto Corsa, ACC and AC Rally: the gear shows on the numpad and RPM on the F-keys while you drive. In menus this layer is see-through. The game\'s telemetry is only read, never changed.' : '')
     + errs.map(([k, v]) => `<br><span style="color:var(--accent)">${k} capture failed: ${esc(v)}</span>`).join('');
 }
@@ -729,6 +823,242 @@ function buildProfiles() {
   };
 }
 
+// ---------- keys & macros ----------
+let MACROS = null, ASSIGN = null, keysDirty = false, curMacro = 0, selPos = null, extraRows = [];
+let recording = null;
+const KEYNAME = {}, CODE2USAGE = {}, MEDIANAME = {};
+const posInfo = {}, ledPos = {};
+function keysColors() {
+  const out = [];
+  for (const k of S.layout) {
+    const pos = ledPos[k.index], a = pos !== undefined && ASSIGN ? ASSIGN[pos] : null;
+    out[k.index] = pos !== undefined && pos === selPos ? [255, 255, 255]
+      : !a ? (k.side || pos === undefined ? [0, 0, 0] : [40, 42, 52])
+      : a.type === 'macro' ? [255, 45, 85] : a.type === 'disabled' ? [90, 90, 90] : [0, 170, 255];
+  }
+  return out;
+}
+function setKeysDirty(v) { keysDirty = v; $('#keys-dirty').style.display = v ? '' : 'none'; }
+function syncKeys() {
+  if (!keysDirty && !recording) {
+    const sig = JSON.stringify([ST.macros, ST.key_assignments]);
+    if (sig !== syncKeys.sig) {
+      syncKeys.sig = sig;
+      MACROS = JSON.parse(JSON.stringify(ST.macros || []));
+      ASSIGN = JSON.parse(JSON.stringify(ST.key_assignments || {}));
+      curMacro = Math.min(curMacro, Math.max(0, MACROS.length - 1));
+      renderAssign(); renderMacros();
+    }
+  }
+  const sync = ST.keys_in_sync, bad = sync ? sync.map((ok, i) => ok ? 0 : i + 1).filter(Boolean) : [];
+  const banner = ST.status === 'connected' && bad.length > 0 && !keysDirty;
+  $('#keys-banner').style.display = banner ? '' : 'none';
+  if (banner) $('#keys-banner-text').textContent = bad.length === 3
+    ? 'The key assignments on the keyboard differ from the ones saved here.'
+    : `The keymap of hardware profile ${bad.join(' and ')} is damaged (a stock-firmware bug after a keyboard reset). ` +
+      'Saving rewrites all three profiles with the assignments shown here.';
+}
+function assignOptions(pos) {
+  const info = posInfo[pos];
+  let h = `<option value="">Default${info.group === 'macro' ? ' (REC recording)' : ''}</option>`;
+  if (MACROS.length) h += '<optgroup label="Macros">' + MACROS.map(m => `<option value="macro:${esc(m.name)}">${esc(m.name)}</option>`).join('') + '</optgroup>';
+  h += '<optgroup label="Media">' + S.media_codes.map(([c, n]) => `<option value="media:${c}">${esc(n)}</option>`).join('') + '</optgroup>';
+  h += '<optgroup label="Key">' + S.keycodes.map(([u, n]) => `<option value="key:${u}">${esc(n)}</option>`).join('') + '</optgroup>';
+  return h + '<option value="disabled">Disabled</option>';
+}
+function renderAssign() {
+  const tb = $('#assign'); tb.innerHTML = '';
+  const rows = S.assignable.filter(a => a.group !== 'key' || ASSIGN[a.pos] || extraRows.includes(a.pos));
+  for (const a of rows) {
+    const tr = document.createElement('tr');
+    if (a.pos === selPos) tr.className = 'sel';
+    const cur = ASSIGN[a.pos];
+    tr.innerHTML = `<td>${esc(a.label)}<span class="tag">${a.group === 'macro' ? 'macro key' : a.group === 'media' ? 'media key' : 'key'}</span></td>
+      <td><select>${assignOptions(a.pos)}</select></td><td>${a.group === 'key' ? '<button class="btn">Remove</button>' : ''}</td>`;
+    const sel = tr.querySelector('select');
+    sel.value = !cur ? '' : cur.type === 'macro' ? 'macro:' + cur.macro : cur.type === 'disabled' ? 'disabled' : cur.type + ':' + cur.code;
+    sel.onchange = () => {
+      const v = sel.value, i = v.indexOf(':');
+      if (!v) delete ASSIGN[a.pos];
+      else if (v === 'disabled') ASSIGN[a.pos] = {type: 'disabled'};
+      else if (v.startsWith('macro:')) ASSIGN[a.pos] = {type: 'macro', macro: v.slice(i + 1)};
+      else ASSIGN[a.pos] = {type: v.slice(0, i), code: +v.slice(i + 1)};
+      setKeysDirty(true); render();
+    };
+    const rm = tr.querySelector('button');
+    if (rm) rm.onclick = () => { delete ASSIGN[a.pos]; extraRows = extraRows.filter(p => p !== a.pos);
+                                 if (selPos === a.pos) selPos = null; setKeysDirty(true); renderAssign(); render(); };
+    tr.onclick = e => { if (!['SELECT', 'OPTION', 'BUTTON'].includes(e.target.tagName)) { selPos = a.pos; renderAssign(); render(); } };
+    tb.appendChild(tr);
+  }
+}
+function pickKeyLed(led) {
+  const pos = ledPos[led];
+  if (pos === undefined) {
+    const k = S.layout.find(k => k.index === led);
+    return toast(k && k.label === 'Fn' ? 'Fn can’t be remapped, so the Fn shortcuts keep working' : 'That’s a light, not a key');
+  }
+  if (!extraRows.includes(pos)) extraRows.push(pos);
+  selPos = pos; renderAssign(); render();
+  $('#assign tr.sel select')?.focus();
+}
+const evName = u => KEYNAME[u] || ('key ' + u);
+const macro = () => MACROS[curMacro];
+function renderMacros() {
+  const sel = $('#macro-sel');
+  sel.innerHTML = MACROS.length ? MACROS.map((m, i) => `<option value="${i}">${esc(m.name)}</option>`).join('') : '<option>No macros yet</option>';
+  sel.value = curMacro; sel.disabled = !MACROS.length;
+  $('#macro-del').disabled = $('#macro-dup').disabled = !MACROS.length;
+  $('#macro-edit').style.display = MACROS.length ? '' : 'none';
+  const m = macro(); if (!m) return;
+  if (document.activeElement !== $('#m-name')) $('#m-name').value = m.name;
+  $('#m-repeat').value = m.repeat || 1;
+  renderEvents();
+}
+function renderEvents() {
+  const m = macro(), tb = $('#m-events'); tb.innerHTML = '';
+  m.events.forEach((ev, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${i + 1}</td><td><select><option value="down">Press down</option><option value="up">Release</option></select></td>
+      <td>${esc(evName(ev[1]))}</td><td><input type="number" min="0" max="${S.macro_limits.max_delay_ms}" value="${ev[2]}"></td>
+      <td><button class="x" title="Move up">↑</button><button class="x" title="Move down">↓</button><button class="x" title="Remove">✕</button></td>`;
+    const act = tr.querySelector('select'), wait = tr.querySelector('input'), [up, down, x] = tr.querySelectorAll('button');
+    act.value = ev[0];
+    act.onchange = () => { ev[0] = act.value; setKeysDirty(true); };
+    wait.onchange = () => { ev[2] = Math.max(0, Math.min(S.macro_limits.max_delay_ms, Math.round(+wait.value || 0)));
+                            wait.value = ev[2]; setKeysDirty(true); macroInfo(); };
+    const move = d => { const j = i + d; if (j < 0 || j >= m.events.length) return;
+                        [m.events[i], m.events[j]] = [m.events[j], m.events[i]]; setKeysDirty(true); renderEvents(); };
+    up.onclick = () => move(-1); down.onclick = () => move(1);
+    x.onclick = () => { m.events.splice(i, 1); setKeysDirty(true); renderEvents(); };
+    tb.appendChild(tr);
+  });
+  macroInfo();
+}
+function macroInfo() {
+  const m = macro(); if (!m) return;
+  const ms = m.events.reduce((t, e) => t + e[2] + 5, 0) * (m.repeat || 1);
+  const bytes = MACROS.reduce((t, x) => t + 4 + 4 * x.events.length, 0);
+  $('#m-info').textContent = `${m.events.length} events · plays in about ${(ms / 1000).toFixed(1)} s · ` +
+    `keyboard macro memory ${Math.min(100, Math.ceil(bytes / S.macro_limits.bytes * 100))}% used`;
+}
+function newMacroName(base) {
+  let n = 1, name = base;
+  while (MACROS.some(m => m.name === name)) name = base + ' ' + (++n);
+  return name;
+}
+function stopRecording() {
+  if (!recording) return;
+  removeEventListener('keydown', recording.h, true); removeEventListener('keyup', recording.h, true);
+  const m = macro(); if (m && m.events.length) m.events[m.events.length - 1][2] = 0;
+  recording = null; $('#m-rec').classList.remove('on'); $('#m-rec').textContent = '● Record';
+  $('#m-rec-note').textContent = ''; if (m) renderEvents();
+}
+function startRecording() {
+  const m = macro(), timing = $('#m-rec-timing').checked;
+  let last = null;
+  const h = e => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.repeat) return;
+    const u = CODE2USAGE[e.code];
+    if (u === undefined) return;
+    const now = performance.now();
+    if (m.events.length && last !== null)
+      m.events[m.events.length - 1][2] = timing ? Math.min(S.macro_limits.max_delay_ms, Math.round(now - last)) : 30;
+    last = now;
+    m.events.push([e.type === 'keydown' ? 'down' : 'up', u, 0]);
+    setKeysDirty(true); renderEvents();
+  };
+  recording = {h};
+  addEventListener('keydown', h, true); addEventListener('keyup', h, true);
+  document.activeElement?.blur();
+  $('#m-rec').classList.add('on'); $('#m-rec').textContent = '■ Stop';
+  $('#m-rec-note').textContent = 'Recording… type now, then click Stop.';
+}
+function buildKeys() {
+  for (const [u, n, c] of S.keycodes) { KEYNAME[u] = n; CODE2USAGE[c] = u; }
+  for (const [c, n] of S.media_codes) MEDIANAME[c] = n;
+  for (const a of S.assignable) { posInfo[a.pos] = a; if (a.led !== undefined) ledPos[a.led] = a.pos; }
+  $('#m-key').innerHTML = S.keycodes.map(([u, n]) => `<option value="${u}">${esc(n)}</option>`).join('');
+  $('#macro-sel').onchange = () => { stopRecording(); curMacro = +$('#macro-sel').value; renderMacros(); };
+  $('#macro-new').onclick = () => {
+    if (MACROS.length >= S.macro_limits.macros) return toast('At most ' + S.macro_limits.macros + ' macros');
+    stopRecording(); MACROS.push({name: newMacroName('Macro'), events: [], repeat: 1});
+    curMacro = MACROS.length - 1; setKeysDirty(true); renderMacros(); renderAssign(); $('#m-name').select();
+  };
+  $('#macro-dup').onclick = () => {
+    const m = macro(); if (!m) return;
+    stopRecording(); MACROS.push({...JSON.parse(JSON.stringify(m)), name: newMacroName(m.name)});
+    curMacro = MACROS.length - 1; setKeysDirty(true); renderMacros(); renderAssign();
+  };
+  $('#macro-del').onclick = () => {
+    const m = macro(); if (!m || !confirm('Delete macro "' + m.name + '"? Keys that play it go back to their default.')) return;
+    stopRecording(); MACROS.splice(curMacro, 1);
+    for (const [p, a] of Object.entries(ASSIGN)) if (a.type === 'macro' && a.macro === m.name) delete ASSIGN[p];
+    curMacro = Math.max(0, curMacro - 1); setKeysDirty(true); renderMacros(); renderAssign(); render();
+  };
+  $('#m-name').oninput = () => {
+    const m = macro(), name = $('#m-name').value.trim();
+    if (!name || MACROS.some(x => x !== m && x.name === name)) return;
+    for (const a of Object.values(ASSIGN)) if (a.type === 'macro' && a.macro === m.name) a.macro = name;
+    m.name = name; setKeysDirty(true);
+    const opt = $('#macro-sel').options[curMacro]; if (opt) opt.textContent = name;
+    renderAssign();
+  };
+  $('#m-repeat').onchange = () => { macro().repeat = Math.max(1, Math.min(255, Math.round(+$('#m-repeat').value || 1)));
+                                    $('#m-repeat').value = macro().repeat; setKeysDirty(true); macroInfo(); };
+  $('#m-rec').onclick = () => recording ? stopRecording() : startRecording();
+  $('#m-text-add').onclick = () => {
+    const text = $('#m-text').value; if (!text) return;
+    api('/api/macros/text', {text, delay: 10}).then(r => {
+      if (r.error) return toast(r.error.replace(/^\w+: /, ''));
+      const m = macro(), last = m.events[m.events.length - 1];
+      if (last && last[2] === 0) last[2] = 30;
+      m.events.push(...r.events); $('#m-text').value = ''; setKeysDirty(true); renderEvents();
+    });
+  };
+  $('#m-key-add').onclick = () => {
+    const m = macro(), u = +$('#m-key').value, wait = Math.max(0, Math.round(+$('#m-wait').value || 0)), act = $('#m-act').value;
+    if (act === 'press') m.events.push(['down', u, 30], ['up', u, wait]); else m.events.push([act, u, wait]);
+    setKeysDirty(true); renderEvents();
+  };
+  $('#m-clear').onclick = () => { if (macro().events.length && confirm('Remove all events of this macro?')) {
+                                    macro().events = []; setKeysDirty(true); renderEvents(); } };
+  $('#keys-revert').onclick = () => { stopRecording(); setKeysDirty(false); syncKeys.sig = null; extraRows = []; selPos = null;
+                                      syncKeys(); render(); };
+  const save = () => {
+    stopRecording();
+    const empty = MACROS.find(m => !m.events.length);
+    if (empty) return toast('Macro "' + empty.name + '" has no events yet');
+    $('#keys-save').disabled = $('#keys-repair').disabled = true; toast('Saving to the keyboard…');
+    api('/api/keys/save', {macros: MACROS, assignments: ASSIGN}).then(r => {
+      $('#keys-save').disabled = $('#keys-repair').disabled = false;
+      if (r.error) return toast(r.error.replace(/^\w+: /, ''));
+      setKeysDirty(false); syncKeys.sig = null; toast('Saved on the keyboard'); refresh();
+    });
+  };
+  $('#keys-save').onclick = save; $('#keys-repair').onclick = save;
+}
+
+// ---------- settings ----------
+const SETTINGS = [['#set-tray', 'tray_icon'], ['#set-browser', 'open_browser'], ['#set-autostart', 'autostart']];
+function showSettings() {
+  const st = ST.settings || {};
+  for (const [id, k] of SETTINGS) if (document.activeElement !== $(id)) $(id).checked = !!st[k];
+  $('#quit-app').disabled = !st.can_quit;
+}
+function buildSettings() {
+  $('#app-version').textContent = 'K580 RGB ' + S.version;
+  for (const [id, k] of SETTINGS)
+    $(id).onchange = () => api('/api/settings', {[k]: $(id).checked}).then(r => r.error ? toast(r.error) : refresh());
+  $('#quit-app').onclick = () => {
+    if (!confirm('Quit K580 RGB? A running live effect stops; built-in lighting, macros and key assignments keep working.')) return;
+    api('/api/quit', {}).then(() => {
+      document.body.innerHTML = '<p style="padding:40px;color:#8a90a0">K580 RGB has quit. Start it again with run.bat.</p>';
+    });
+  };
+}
+
 // ---------- state ----------
 async function refresh() {
   ST = await api('/api/state');
@@ -751,10 +1081,11 @@ async function refresh() {
   }
   const mediaSig = JSON.stringify(ST.media);
   if (mediaSig !== refresh.mediaSig) { refresh.mediaSig = mediaSig; renderLayers(); }
-  showParams(); renderProfiles(); updateLiveNote(); render();
+  showParams(); renderProfiles(); updateLiveNote(); syncKeys(); showSettings(); render();
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  if (tab === 'keys' && b.dataset.tab !== 'keys') stopRecording();
   tab = b.dataset.tab;
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === tab));
@@ -764,7 +1095,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 (async () => {
   S = await api('/api/static');
   PRESETS = S.presets || {};
-  buildKeyboard(); buildModes(); buildPerKey(); buildLive(); buildProfiles();
+  buildKeyboard(); buildModes(); buildPerKey(); buildLive(); buildProfiles(); buildKeys(); buildSettings();
   await refresh();
   setInterval(refresh, 1500);
 })();

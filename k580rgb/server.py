@@ -8,11 +8,12 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
-from . import __version__, effects, layout, modes, presets, sources
+from . import __version__, autostart, effects, keycodes, layout, macros, modes, presets, sources
 from .device import SIDE_COLORS, SIDE_MODES, Params
 from .modes import CUSTOM
 
@@ -20,7 +21,7 @@ UI_DIR = os.path.join(os.path.dirname(__file__), 'ui')
 PREVIEW_FPS = 20
 
 
-def make_handler(controller, automation, port):
+def make_handler(controller, automation, port, app=None):
     allowed_hosts = {'127.0.0.1:%d' % port, 'localhost:%d' % port}
 
     static = {
@@ -40,6 +41,12 @@ def make_handler(controller, automation, port):
         'presets': presets.BUILTIN,
         'version': __version__,
         'sources': sources.available(),
+        'keycodes': [[u, n, code] for u, n, code in keycodes.KEYS],
+        'media_codes': keycodes.MEDIA,
+        'assignable': macros.assignable(),
+        'macro_limits': {'macros': macros.MAX_MACROS, 'delay_unit_ms': macros.DELAY_UNIT_MS,
+                         'max_delay_ms': int(macros.MAX_DELAY * macros.DELAY_UNIT_MS),
+                         'bytes': macros.AREA_END - macros.MACRO_BASE - macros.DATA_OFFSET},
     }
 
     def apply(body):
@@ -104,6 +111,27 @@ def make_handler(controller, automation, port):
     def bake(body):
         controller.bake(body['layers'])
 
+    def save_keys(body):
+        controller.save_keys(body['macros'], body['assignments'])
+
+    def text_macro(body):
+        return {'events': keycodes.text_events(str(body['text'])[:2000], float(body.get('delay', 10)))}
+
+    def settings(body):
+        cfg = controller.config
+        for k in ('tray_icon', 'open_browser'):
+            if k in body:
+                cfg[k] = bool(body[k])
+        if 'tray_icon' in body and app:
+            app.show_tray(cfg['tray_icon'])
+        if 'autostart' in body:
+            autostart.set_enabled(bool(body['autostart']))
+        controller.save_config()
+
+    def quit_app(body):
+        if app:     # like Quit in the tray: the LEDs are released on exit, the live effect resumes next start
+            threading.Timer(0.3, app.quit).start()      # reply first
+
     def delete_media(body):
         from . import media
         media.delete(body['name'])
@@ -134,6 +162,10 @@ def make_handler(controller, automation, port):
         '/api/automation': set_automation,
         '/api/live': live,
         '/api/bake': bake,
+        '/api/keys/save': save_keys,
+        '/api/macros/text': text_macro,
+        '/api/settings': settings,
+        '/api/quit': quit_app,
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -170,6 +202,12 @@ def make_handler(controller, automation, port):
                                  'media': media_list(),
                                  'live_presets': controller.config.get('live_presets', {}),
                                  'rocket_mania': rocket_mania_status(),
+                                 'macros': controller.config['macros'],
+                                 'key_assignments': controller.config['key_assignments'],
+                                 'settings': {'tray_icon': controller.config.get('tray_icon', True),
+                                              'open_browser': controller.config.get('open_browser', True),
+                                              'autostart': autostart.enabled(),
+                                              'can_quit': app is not None},
                                  'source_errors': {'audio': sources.AUDIO.error, 'screen': sources.SCREEN.error}})
             elif self.path == '/api/frames':
                 self._stream_frames()
@@ -188,10 +226,10 @@ def make_handler(controller, automation, port):
             if not handler:
                 return self._send(404, {'error': 'not found'})
             try:
-                handler(json.loads(self.rfile.read(n) or b'{}'))
+                result = handler(json.loads(self.rfile.read(n) or b'{}'))
             except (KeyError, ValueError, TypeError, OSError) as e:
                 return self._send(400, {'error': '%s: %s' % (type(e).__name__, e)})
-            self._send(200, {'ok': True})
+            self._send(200, {'ok': True, **(result or {})})
 
         def _upload(self, n):
             from . import media
@@ -237,7 +275,7 @@ class Server(ThreadingHTTPServer):
             super().handle_error(request, client_address)
 
 
-def serve(controller, automation, port):
-    httpd = Server(('127.0.0.1', port), make_handler(controller, automation, port))
+def serve(controller, automation, port, app=None):
+    httpd = Server(('127.0.0.1', port), make_handler(controller, automation, port, app))
     httpd.daemon_threads = True
     return httpd

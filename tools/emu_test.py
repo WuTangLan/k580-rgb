@@ -16,10 +16,15 @@ USB_CTX = 0x200007B4          # +0x54 flags (bit19 = report received), +0x58 rep
 REPORT = 0x200000D2
 PLANES = 0x200001D2
 WORK = {0x2000034C: 0, 0x20000448: 126, 0x200003CA: 252}  # working buf -> plane offset (R, G, B)
-TICK = 0x20000040
+STOCK_TICK = 0x20000040      # stock SysTick counter (reset every 16 ticks by 0x280)
 STATE = 0x20001F00
+TICK = STATE + 8             # patch v2's own SysTick counter
 MAGIC = 0xD1EC7C0D
 STOP = 0x0000FFF0
+SYSTICK_WRAPPER = 0xD404
+FLASH_WRITE = 0x7158
+FACTORY_RESET = 0x7382
+FN_TABLE = 0x7E98
 
 failures = 0
 
@@ -39,9 +44,18 @@ class Emu:
         uc.mem_map(0x40000000, 0x80000)
         uc.mem_map(0xE000E000, 0x1000)
         uc.hook_add(UC_HOOK_CODE, self._stub, begin=SEND_REPLY, end=SEND_REPLY)
+        uc.hook_add(UC_HOOK_CODE, self._flash_write, begin=FLASH_WRITE, end=FLASH_WRITE)
+        self.flash_writes = []
 
     def _stub(self, uc, addr, size, _):
         # send_reply(ep, buf, len) -> 0 (success)
+        uc.reg_write(UC_ARM_REG_R0, 0)
+        uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+
+    def _flash_write(self, uc, addr, size, _):
+        # flash_write(addr, len, src): record it, don't touch flash
+        from unicorn.arm_const import UC_ARM_REG_R1
+        self.flash_writes.append((uc.reg_read(UC_ARM_REG_R0), uc.reg_read(UC_ARM_REG_R1)))
         uc.reg_write(UC_ARM_REG_R0, 0)
         uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
@@ -156,6 +170,57 @@ def main():
     e.set_u32(STATE + 4, 0xA5A5A5A5)
     e.call(HOOK_PRESENT)
     check('garbage RAM at boot: stock behaviour', e.rd(PLANES, 4) == bytes([0, 1, 2, 3]))
+
+    e = fresh(patched)
+    e.set_u32(STATE, 1000 + 0x100000)        # deadline left over from before a reset, far ahead
+    e.set_u32(STATE + 4, MAGIC)
+    e.call(HOOK_PRESENT)
+    check('stale far-future deadline: stock behaviour', e.rd(PLANES, 4) == bytes([0, 1, 2, 3]))
+
+    print('SysTick wrapper (v2)')
+    vec = struct.unpack_from('<I', patched, 0x3C)[0]
+    check('vector 15 points to the wrapper', vec == SYSTICK_WRAPPER | 1)
+    e = fresh(patched)
+    e.set_u32(STOCK_TICK, 5)
+    for _ in range(40):
+        e.call(SYSTICK_WRAPPER)
+    check('own counter advances', e.u32(TICK) == 1000 + 40)
+    check('stock handler still runs', e.u32(STOCK_TICK) == 5 + 40)
+    a, b = fresh(stock), fresh(patched)
+    a.call(0x795C)
+    b.call(SYSTICK_WRAPPER)
+    ra, rb = bytearray(a.rd(0x20000000, 0x1F00)), bytearray(b.rd(0x20000000, 0x1F00))
+    check('otherwise identical to stock SysTick', ra == rb)
+
+    print('timeout now expires in real time (v2)')
+    e = fresh(patched)
+    e.command(0x20, 56, 0, data)
+    for _ in range(0x2001):
+        e.set_u32(TICK, e.u32(TICK) + 1)
+        e.set_u32(STOCK_TICK, e.u32(STOCK_TICK) % 16)  # what 0x280 does to the stock counter
+    e.call(HOOK_PRESENT)
+    check('expired after ~2.5 s of ticks', e.rd(PLANES, 4) == bytes([0, 1, 2, 3]))
+
+    print('Fn + PrtSc (v2)')
+    check('stock: Fn table has PrtSc (pos 84) -> factory reset', stock[FN_TABLE + 13] == 84
+          and stock[0x7EB7 + 39:0x7EB7 + 42] == bytes([5, 8, 0]))
+    check('patched: no Fn entry matches PrtSc', 84 not in patched[FN_TABLE:FN_TABLE + 31])
+    check('patched: other Fn entries unchanged',
+          [x for i, x in enumerate(patched[FN_TABLE:FN_TABLE + 31]) if i != 13]
+          == [x for i, x in enumerate(stock[FN_TABLE:FN_TABLE + 31]) if i != 13]
+          and patched[0x7EB7:0x7EB7 + 93] == stock[0x7EB7:0x7EB7 + 93])
+
+    print('factory reset writes (v2)')
+    a, b = fresh(stock), fresh(patched)
+    a.call(FACTORY_RESET)
+    b.call(FACTORY_RESET)
+    keymaps = lambda w: [(hex(x), n) for x, n in w if n == 0x17A]
+    check('stock writes keymaps to 0xA100, 0xA300, 0xA500 (bug)',
+          keymaps(a.flash_writes) == [('0xa100', 0x17A), ('0xa300', 0x17A), ('0xa500', 0x17A)])
+    check('patched writes keymaps to 0xA100, 0xA27A, 0xA3F4',
+          keymaps(b.flash_writes) == [('0xa100', 0x17A), ('0xa27a', 0x17A), ('0xa3f4', 0x17A)])
+    check('all other writes unchanged', [w for w in a.flash_writes if w[1] != 0x17A]
+          == [w for w in b.flash_writes if w[1] != 0x17A])
 
     print('\n%s' % ('ALL PASSED' if not failures else '%d FAILED' % failures))
     sys.exit(1 if failures else 0)

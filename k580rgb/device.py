@@ -18,6 +18,11 @@ USAGE_PAGE, USAGE = 0xFF1C, 0x92
 CMD_READ_HEADER = 0x03    # flash 0xA000 + offset
 CMD_READ_PARAMS = 0x05    # flash 0xA080 + offset
 CMD_WRITE_PARAMS = 0x06
+CMD_READ_KEYMAP = 0x07    # flash 0xA100 + offset (one 126 x 3-byte keymap per profile)
+CMD_WRITE_KEYMAP = 0x08
+CMD_READ_MACROS = 0x09    # flash 0xAC00 + offset
+CMD_WRITE_MACROS = 0x0A
+CMD_READ_ROM = 0x0F       # flash 0x90D8 + offset: firmware tables, starting with the factory keymap
 CMD_READ_CUSTOM = 0x10    # flash 0xA600 + offset
 CMD_WRITE_CUSTOM = 0x11
 CMD_DIRECT = 0x20         # patched firmware: RAM-only LED planes
@@ -26,12 +31,14 @@ MAX_DATA = 56
 PROFILES = 3
 PROFILE_PARAMS_SIZE = 0x2A
 PROFILE_CUSTOM_SIZE = 0x200
+KEYMAP_SIZE = 0x17A       # 126 x 3 bytes
 HEADER_PROFILE = 0x0A     # active profile index in the header
 NUM_LEDS = 126            # 6 rows x 21 columns, index = row * 21 + col
 CUSTOM_SIZE = 3 * NUM_LEDS
 STATUS_ERROR = 0xFF
 DIRECT_KEEPALIVE = 1.0    # s; patched firmware falls back to stock effects after ~2.5 s
 REPLY_TIMEOUT = 0.5       # s per attempt
+REPLY_ATTEMPTS = 3
 
 # Side light strips: 14 LEDs in two groups of 7 (firmware table 0x8335). Their green and
 # blue are wired swapped relative to the keys (firmware writes G into the B plane for them).
@@ -136,12 +143,13 @@ class K580:
             if not self._dev and not self.open():
                 raise DeviceError('keyboard not connected')
             try:
-                for _ in range(2):            # every command is idempotent: resend once if the reply got lost
+                for _ in range(REPLY_ATTEMPTS):   # every command is idempotent: resend if the reply got lost
                     self._dev.write(bytes(pkt))
                     deadline = time.monotonic() + REPLY_TIMEOUT
                     while time.monotonic() < deadline:
                         r = bytes(self._dev.read(64, 100))
-                        if len(r) >= 8 and r[0] == 0x04 and r[3] == cmd:
+                        # the reply echoes cmd and offset; anything else is a stale reply to another request
+                        if len(r) >= 8 and r[0] == 0x04 and r[3] == cmd and r[5:7] == pkt[5:7]:
                             return r
             except (OSError, ValueError) as e:
                 self.close()
@@ -196,6 +204,22 @@ class K580:
         flat = lambda cs: bytes(v for c in cs for v in c)
         self._write(CMD_WRITE_CUSTOM, profile * PROFILE_CUSTOM_SIZE, flat(colors),
                     flat(old) if old else None)
+
+    def read_keymap(self, profile):
+        return self._read(CMD_READ_KEYMAP, profile * KEYMAP_SIZE, KEYMAP_SIZE)
+
+    def write_keymap(self, profile, keymap, old=None):
+        self._write(CMD_WRITE_KEYMAP, profile * KEYMAP_SIZE, keymap, old)
+
+    def read_default_keymap(self):
+        """The factory keymap the firmware restores on a reset (read-only table in firmware)."""
+        return self._read(CMD_READ_ROM, 0, KEYMAP_SIZE)
+
+    def read_macros(self, size):
+        return self._read(CMD_READ_MACROS, 0, size)
+
+    def write_macros(self, image, old=None):
+        self._write(CMD_WRITE_MACROS, 0, image, old)
 
     # -- patched firmware ------------------------------------------------------
 

@@ -921,6 +921,212 @@ class DamageFlash(Effect):
         return [c if i in BY_INDEX and not BY_INDEX[i].iso else None for i in range(NUM_LEDS)]
 
 
+BATTLEFIELD_GAMES = {
+    'Battlefield 1': {'bf1.exe'},
+    'Battlefield V': {'bfv.exe'},
+    'Battlefield 2042': {'bf2042.exe'},
+    'Battlefield 4': {'bf4.exe', 'bf4_x86.exe'},
+    'Any game (always on)': None,
+}
+COMBAT_THEMES = {   # smoke base, highlight (WASD etc.), muzzle flash
+    'Battlefield 1 (amber)': ((46, 20, 4), (255, 140, 30), (255, 200, 90)),
+    'Military (olive)': ((14, 24, 6), (150, 200, 60), (255, 220, 120)),
+    'Night ops (blue)': ((2, 10, 30), (40, 140, 255), (200, 230, 255)),
+}
+EXPLOSION = [(0, (255, 255, 200)), (0.25, (255, 170, 30)), (0.6, (230, 50, 0)), (1, (60, 0, 0))]
+VK_LBUTTON, VK_RBUTTON, VK_R, VK_G, VK_SHIFT = 0x01, 0x02, 0x52, 0x47, 0x10
+COMBAT_KEYS = {'move': [44, 64, 65, 66], 'slots': list(range(22, 29)), 'reload': 46, 'grenade': 68,
+               'number row': list(range(21, 35))}
+
+
+class BattlefieldCombat(Effect):
+    """Battlefield-style combat lighting: smoky ambience, muzzle flashes while you fire, a reload bar,
+    red hits from the side you were shot from, a heartbeat at low health and shockwaves for explosions.
+
+    Battlefield has no lighting API (and its anti-cheat rules out reading game memory), so this reacts to
+    what you see and hear: red damage at the screen edges, loud low booms in the game audio, and your own
+    mouse buttons and keys while the game window is focused."""
+    name = 'Battlefield: Combat'
+    params = {'game': list(BATTLEFIELD_GAMES), 'theme': list(COMBAT_THEMES), 'damage sensitivity': 1.0,
+              'shots': ['Muzzle flash', 'Off'], 'explosions': ['On', 'Off'], 'demo': ['Off', 'On']}
+    source = 'screen'
+    FOCUS_POLL = 0.5
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        from .sources import AUDIO, SCREEN
+        self.screen, self.audio = SCREEN, AUDIO
+        SCREEN.acquire()
+        if self.p['explosions'] == 'On':
+            AUDIO.acquire()
+        self.exes = BATTLEFIELD_GAMES.get(self.p['game'], {'bf1.exe'})
+        self.smoke_c, self.hi_c, self.flash_c = COMBAT_THEMES.get(self.p['theme'], next(iter(COMBAT_THEMES.values())))
+        self.sens = max(float(self.p['damage sensitivity']), 0.1)
+        self.demo = self.p['demo'] == 'On'
+        self.rnd = random.Random()
+        self.focused, self._focus_at = self.exes is None, -9.0
+        self.last = None
+        self.side_base = [None] * 4           # running redness per screen edge: left, right, top, bottom
+        self.slow_base = None
+        self.low_since = None
+        self.hits = []                        # (t, side 0-3, strength)
+        self.booms = []                       # (t, strength)
+        self.bass_avg = 0.0
+        self.last_boom = -9.0
+        self.firing_since = None
+        self.reload_t = self.grenade_t = -9.0
+        self.keys_down = set()
+        self.aiming = False
+        self.next_demo = 0.0
+
+    def close(self):
+        self.screen.release()
+        if self.p['explosions'] == 'On':
+            self.audio.release()
+
+    # -- inputs ----------------------------------------------------------------------------
+
+    def _in_game(self, t):
+        if self.exes is None:
+            return True
+        if t - self._focus_at > self.FOCUS_POLL or t < self._focus_at:
+            from .automation import foreground_process
+            self._focus_at = t
+            self.focused = foreground_process() in self.exes
+        return self.focused
+
+    def _poll_input(self, t):
+        from .automation import user32
+        down = {vk for vk in (VK_LBUTTON, VK_RBUTTON, VK_R, VK_G) if user32.GetAsyncKeyState(vk) & 0x8000}
+        pressed = down - self.keys_down
+        self.keys_down = down
+        if VK_LBUTTON in down:
+            self.firing_since = self.firing_since if self.firing_since is not None else t
+        else:
+            self.firing_since = None
+        self.aiming = VK_RBUTTON in down
+        if VK_R in pressed:
+            self.reload_t = t
+        if VK_G in pressed:
+            self.grenade_t = t
+
+    def _screen(self, t, dt):
+        g = self.screen.grid
+        edges = [[row[0] for row in g], [row[-1] for row in g], g[0], g[-1]]
+        red = [sum(max(0.0, r - (gg + b) / 2) for r, gg, b in e) / (len(e) * 255) for e in edges]
+        total = sum(red) / 4
+        thresh = 0.10 / self.sens
+        for side in range(4):
+            base = self.side_base[side]
+            self.side_base[side] = red[side] if base is None else base * 0.95 + red[side] * 0.05
+            if base is not None and red[side] - base > thresh and not any(
+                    h[1] == side and t - h[0] < 0.25 for h in self.hits):
+                self.hits.append((t, side, min(1.0, (red[side] - base) / thresh / 2)))
+        # low health: the edges stay red/bloody for a while, far above the long-run level
+        self.slow_base = total if self.slow_base is None else self.slow_base * 0.998 + total * 0.002
+        if total - self.slow_base > 0.06 / self.sens:
+            self.low_since = self.low_since if self.low_since is not None else t
+        else:
+            self.low_since = None
+
+    def _audio(self, t):
+        instant = sum(self.audio.bands[:4]) / 4
+        if instant > 0.55 and instant > self.bass_avg * 1.7 and t - self.last_boom > 0.35:
+            self.last_boom = t
+            self.booms.append((t, min(1.0, instant)))
+        self.bass_avg = self.bass_avg * 0.95 + instant * 0.05
+
+    def _demo(self, t):
+        if t < self.next_demo:
+            return
+        what = self.rnd.choice(['burst', 'burst', 'hit', 'boom', 'reload'])
+        if what == 'burst':
+            self.firing_since = t
+            self.next_demo = t + 0.8
+            return
+        self.firing_since = None
+        if what == 'hit':
+            self.hits.append((t, self.rnd.randrange(4), 1.0))
+        elif what == 'boom':
+            self.booms.append((t, 1.0))
+        else:
+            self.reload_t = t
+        self.next_demo = t + self.rnd.uniform(0.8, 1.6)
+
+    # -- drawing -----------------------------------------------------------------------------
+
+    def frame(self, t):
+        dt = 0.0 if self.last is None else max(0.0, t - self.last)
+        self.last = t
+        in_game = self.demo or self._in_game(t)
+        if self.demo:
+            if self.firing_since is not None and t - self.firing_since > 0.7:
+                self.firing_since = None
+            self._demo(t)
+        elif in_game:
+            self._poll_input(t)
+            self._screen(t, dt)
+            if self.p['explosions'] == 'On':
+                self._audio(t)
+        else:
+            self.firing_since, self.aiming = None, False
+        self.hits = [h for h in self.hits if t - h[0] < 0.9]
+        self.booms = [b for b in self.booms if t - b[0] < 1.6]
+
+        # muzzle flash: ~11 shots/s while the trigger is held, each a short decaying flash
+        flash = 0.0
+        if self.firing_since is not None and self.p['shots'] == 'Muzzle flash':
+            phase = ((t - self.firing_since) * 11) % 1.0
+            flash = (1 - phase) ** 2 * (0.75 + 0.25 * self.rnd.random())
+        heart = 0.0
+        if self.low_since is not None and t - self.low_since > 1.0:
+            beat = (t * 1.2) % 1.0                         # lub-dub at 72 bpm
+            heart = max(math.exp(-((beat - 0.05) / 0.05) ** 2), 0.7 * math.exp(-((beat - 0.25) / 0.05) ** 2))
+        reload = (t - self.reload_t) / 1.6                  # reload progress 0..1 across the number row
+        grenade = t - self.grenade_t
+
+        out = [BLACK] * NUM_LEDS
+        for i, key in BY_INDEX.items():
+            if key.iso:
+                continue
+            x, y = key.cx / WIDTH, key.cy / HEIGHT
+            # drifting battlefield smoke
+            n = (math.sin(x * 7 + t * 0.6) + math.sin(y * 5 - t * 0.45 + x * 3) + math.sin((x + y) * 4 + t * 0.3)) / 3
+            c = lerp(BLACK, self.smoke_c, 0.55 + 0.45 * n)
+            if self.aiming:                                 # aiming down sights: focus on the middle
+                c = lerp(c, BLACK, clamp(abs(x - 0.45) * 1.6))
+            if i in COMBAT_KEYS['move'] or i in COMBAT_KEYS['slots']:
+                c = lerp(c, self.hi_c, 0.55 if i in COMBAT_KEYS['move'] else 0.25)
+            if i == COMBAT_KEYS['reload'] or i == COMBAT_KEYS['grenade']:
+                c = lerp(c, self.hi_c, 0.35)
+            if 0 <= reload < 1 and i in COMBAT_KEYS['number row']:
+                pos = (key.cx - 0.5) / 14.5
+                c = lerp(c, self.hi_c, 1.0 if pos <= reload else 0.15)
+            if 0 <= grenade < 2.0 and i == COMBAT_KEYS['grenade']:
+                c = lerp(c, (255, 40, 0), 0.5 + 0.5 * math.sin(grenade * 18))
+            if flash:
+                near = 1.0 if key.side else clamp(1.2 - abs(x - 0.5) * 1.4)
+                c = lerp(c, self.flash_c, flash * near)
+            for t0, strength in self.booms:                # shockwave from the bottom middle
+                age = t - t0
+                d = math.hypot(key.cx - WIDTH / 2, (key.cy - HEIGHT) * 1.3)
+                ring = clamp(1 - abs(d - age * 22) / 3.5) * clamp(1 - age / 1.6) * strength
+                glow = clamp(1 - age / 0.35) * strength * 0.8
+                k = max(ring, glow)
+                if k > 0:
+                    c = lerp(c, ramp(EXPLOSION, age / 1.6 + (1 - ring) * 0.2), k)
+            for t0, side, strength in self.hits:           # red hit from the side you were shot from
+                age = t - t0
+                edge = (x, 1 - x, y, 1 - y)[side]         # side strips sit just outside 0..1
+                k = clamp(1 - edge * 2.2) * clamp(1 - age / 0.9) ** 1.5 * strength
+                if k > 0:
+                    c = lerp(c, (255, 0, 0), k)
+            if heart:
+                c = lerp(c, (200, 0, 0), heart * (0.9 if key.side else 0.6))
+            out[i] = c
+        return out
+
+
 MEDIA = '@media'      # param marker: pick a file from the media library
 
 
@@ -976,7 +1182,7 @@ EFFECTS = {cls.name: cls for cls in
             Solid, GifPlayer, ScrollingText,
             AudioSpectrum, AudioCenter, AudioVU, AudioWaterfall, AudioBeatRipple, AudioColorFlow, AudioPulse,
             ScreenAmbience, KeyFade, Ripple, Heatmap,
-            AssettoCorsaGear, RocketManiaEffect, GamingKeys, DamageFlash]}
+            AssettoCorsaGear, RocketManiaEffect, BattlefieldCombat, GamingKeys, DamageFlash]}
 
 BLENDS = ['Lighten', 'Add', 'Normal']
 
