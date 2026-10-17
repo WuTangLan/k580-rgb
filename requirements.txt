@@ -3,3 +3,4 @@ numpy>=1.24
 soundcard>=0.4.3
 mss>=9.0
 pillow>=10.0
+pystray>=0.19

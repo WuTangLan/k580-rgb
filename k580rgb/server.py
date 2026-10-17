@@ -6,12 +6,13 @@ can't drive the keyboard or wear its flash.
 """
 import json
 import os
+import socket
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import unquote
 
-from . import effects, layout, modes, sources
+from . import __version__, effects, layout, modes, presets, sources
 from .device import SIDE_COLORS, SIDE_MODES, Params
 from .modes import CUSTOM
 
@@ -36,6 +37,8 @@ def make_handler(controller, automation, port):
         'side_colors': SIDE_COLORS,
         'bounds': layout.BOUNDS,
         'blends': effects.BLENDS,
+        'presets': presets.BUILTIN,
+        'version': __version__,
         'sources': sources.available(),
     }
 
@@ -220,6 +223,15 @@ def make_handler(controller, automation, port):
 
 
 class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR (the http.server default) lets a second process bind the same
+    # port, so two app copies would run at once. Bind exclusively so the second one fails.
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
     def handle_error(self, request, client_address):
         if not isinstance(sys.exc_info()[1], ConnectionError):   # browser closed a tab: not an error
             super().handle_error(request, client_address)

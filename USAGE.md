@@ -8,18 +8,31 @@
 ## 2. Start the app
 
 Double-click **`run.bat`**. The first run creates `.venv` and installs the dependencies
-(`hidapi`, `numpy`, `soundcard`, `mss`, `pillow`). Then the app opens at **http://127.0.0.1:5800/**.
+(`hidapi`, `numpy`, `soundcard`, `mss`, `pillow`, `pystray`). The app then runs **in the system tray**
+(no window) and opens **http://127.0.0.1:5800/** in your browser.
+
+**Tray icon** (keyboard with a rainbow glow; it may sit under the ^ arrow next to the clock):
+
+- **Left-click / Open K580 RGB:** opens the app in your browser.
+- **My presets / Built-in presets:** start a live effect on the keyboard with one click.
+- **Stop live effect:** gives the keyboard back its built-in effect.
+- **Start with Windows:** starts the app quietly at login (a per-user Run entry; no admin rights needed).
+- **Quit:** stops the app and hands the LEDs back to the keyboard.
+
+The live effect running on the keyboard when you quit is resumed the next time the app starts.
+Starting the app again while it runs just opens the running one.
 
 From a terminal instead:
 
 ```bat
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m k580rgb            :: --port 5800  --no-browser
+.venv\Scripts\python -m k580rgb --console   :: --port 5800  --no-browser  --no-resume
 ```
 
-Close the app with **Ctrl+C** in its window. Settings live in `%APPDATA%\k580rgb\`:
-`config.json` holds profiles and rules, `media\` your uploaded GIFs, and `k580rgb.log` errors.
+`run.bat --console` does the same. In console mode, close the app with **Ctrl+C**.
+Settings live in `%APPDATA%\k580rgb\`: `config.json` holds profiles, presets and rules, `media\` your
+uploaded GIFs, and `k580rgb.log` errors.
 
 The UI only listens on 127.0.0.1 and refuses requests from other websites.
 

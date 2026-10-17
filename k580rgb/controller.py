@@ -32,6 +32,7 @@ DEFAULT_CONFIG = {
     'automation': False,
     'flash_writes': 0,
     'live_presets': {},          # name -> layer list (your own live-effect presets)
+    'last_live': None,           # {'layers': [...]} running on the keyboard at last exit
 }
 
 
@@ -211,6 +212,25 @@ class Controller:
             self.live_stream = bool(stream and new)
             if not self.live_stream:
                 self._release_direct()
+            # remembered so the next start (e.g. at login) resumes what ran on the keyboard
+            remember = {'layers': specs} if self.live_stream else None
+            if self.config.get('last_live') != remember:
+                self.config['last_live'] = remember
+                self.save_config()
+
+    def restore_last_live(self):
+        """Resume the live effect that was running on the keyboard when the app last closed."""
+        last = self.config.get('last_live')
+        if not last:
+            return False
+        try:
+            self.set_live(last['layers'], stream=True)
+            log.info('resumed last live effect: %s', self.live.name)
+            return True
+        except Exception as e:             # e.g. a GIF it used was deleted
+            log.warning('could not resume last live effect: %s', e)
+            self.config['last_live'] = None
+            return False
 
     def _release_direct(self):
         """Hand the LEDs back to the keyboard's own effects right away (no flash write).

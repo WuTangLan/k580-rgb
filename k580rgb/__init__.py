@@ -1,2 +1,2 @@
 """K580 RGB: custom lighting controller for the Redragon K580 VATA."""
-__version__ = '0.2.1'
+__version__ = '0.3.0'

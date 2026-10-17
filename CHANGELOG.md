@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+- **System tray app:** runs windowless in the tray (`run.bat`, `k580rgb.pyw`). The menu has
+  Open, your presets and the built-in presets, Stop live effect, Start with Windows, and Quit.
+  `--console` keeps the terminal mode.
+- **Resume:** the live effect running on the keyboard when the app closes is resumed at the next start
+  (`--no-resume` to skip).
+- **Single instance:** starting the app again opens the running copy instead of a second one.
+- Built-in presets now live in `k580rgb/presets.py`, shared by the web UI and the tray menu.
+
+### Fixed
+- Two copies of the app could run at once on Windows (shared port via `SO_REUSEADDR`), with both driving
+  the keyboard. The port is now bound exclusively.
+
 ## 0.2.1
 
 ### Added

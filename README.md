@@ -22,7 +22,7 @@ both side strips. The stock effects and presets keep working.
 |---|---|
 | `k580rgb/` | The app: HID protocol, effect engine, local web UI (`python -m k580rgb`) |
 | `tools/` | Firmware extraction, disassembly, patch builder, emulator tests, flasher |
-| `run.bat` | One-click start (creates `.venv` on first run) |
+| `run.bat`, `k580rgb.pyw` | One-click start in the system tray (creates `.venv` on first run) |
 
 ## Not included
 
