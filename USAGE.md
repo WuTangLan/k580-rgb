@@ -2,15 +2,7 @@
 
 ## Run
 
-Requirements: Windows 10/11 and Python 3.10+ (with "Add to PATH").
-
-```bat
-run.bat                 :: tray app; first run creates .venv and installs dependencies
-run.bat --console       :: run in the terminal instead (Ctrl+C quits)
-```
-
-Options: `--port N`, `--no-browser`, `--no-resume`.
-Settings, uploaded media and the log are in `%APPDATA%\k580rgb\`.
+See the [README](README.md#usage). Options: `--port N`, `--console`, `--no-browser`, `--no-resume`.
 
 ## The app
 
